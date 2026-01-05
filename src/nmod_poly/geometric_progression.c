@@ -76,36 +76,37 @@ nmod_geometric_progression_init(nmod_geometric_progression_t G, ulong r, slong l
     G->w[0] = 1;
 
     inv_diff  = _nmod_vec_init(len);
-    diff      = _nmod_vec_init(len);
-    prod_diff = _nmod_vec_init(len);
     inv_diff[0] = 1;
-    diff[0] = 1;
-    prod_diff[0] = 1;
+    G->z[0] = 1;
+    G->y[0] = 1;
 
     qk = q;  // Montgomery inversion
     /* FIXME improve with Shoup */
-    /* FIXME diff not reused, could use e.g. G->y as buffer */
-    /* FIXME similarly it seems G->w could store inv_diff, G->y could store prod_diff */
-    /* diff[i] = q**i - 1 */
-    /* prod_diff[i] = (q-1) ... (q**i - 1) */
+    /* temporarily, G->z[i] = q**i - 1 */
+    /* temporarily, G->y[i] = (q-1) ... (q**i - 1) */
     /* inv_diff[i] = 1 / (q**i - 1) */
     for (i = 1; i < len; i++)
     {
-        diff[i] = qk - 1;
-        prod_diff[i] = nmod_mul(qk - 1, prod_diff[i - 1], mod);
+        G->z[i] = qk - 1;
+        G->y[i] = nmod_mul(qk - 1, G->y[i - 1], mod);
         qk = nmod_mul(qk, q, mod);
     }
 
-    tmp = nmod_inv(prod_diff[len-1], mod);
+    tmp = nmod_inv(G->y[len-1], mod);
+    /* FIXME strategy does not seem ideal: now we have 1 / (q-1) ... (q**(len-1) - 1) */
+    /* and what we really seek later is all the 1 / (q-1) ... (q**i - 1), */
+    /* we don't really care about individual inverses 1 / (q**i - 1) */
+    /* -> simply take tmp and multiply successively by q**i - 1 (stored in
+     * G->z), for descending i, to obtain directly G->w? */
     for (i = len - 1; i > 0; i--)
     {
-        inv_diff[i] = nmod_mul(prod_diff[i - 1], tmp, mod);
-        tmp = nmod_mul(tmp, diff[i], mod);
+        inv_diff[i] = nmod_mul(G->y[i - 1], tmp, mod);
+        tmp = nmod_mul(tmp, G->z[i], mod);
     }
     inv_diff[0] = tmp;
     // end Montgomery inversion
 
-    qk = 1;  /* FIXME will recompute the powers of q */
+    qk = 1;  /* FIXME will recompute the powers of q, could exploit those in G->z ? */
     inv_qk = 1;
     qq = 1;
     s = 1;
@@ -114,20 +115,20 @@ nmod_geometric_progression_init(nmod_geometric_progression_t G, ulong r, slong l
     {
         qq = nmod_mul(qq, qk, mod);    /* q**(i*(i-1)/2) */
         s = nmod_mul(s, inv_qk, mod);  /* inverse of q**(i*(i-1)/2) */
-        G->w[i] = nmod_mul(G->w[i - 1], inv_diff[i], mod); /* prod_{1 <= k <= i} 1/(q**k-1) */
-        tmp = nmod_mul(qq, G->w[i], mod); /* prod_{1 <= k <= i} q**(k-1) / (q**k - 1) */
+        G->w[i] = nmod_mul(G->w[i - 1], inv_diff[i], mod);
+        tmp = nmod_mul(qq, G->w[i], mod);
         G->g2->coeffs[i] = tmp;
 
         if (i % 2)  /* i is odd */
         {
             G->g1->coeffs[i] = mod.n - tmp;
-            G->y[i] = mod.n - prod_diff[i];
+            G->y[i] = mod.n - G->y[i];
             G->z[i] = mod.n - G->w[i];
         }
         else  /* i is even */
         {
             G->g1->coeffs[i] = tmp;
-            G->y[i] = prod_diff[i];
+            /* G->y[i] = G->y[i]; */
             G->z[i] = G->w[i];
         }
         G->y[i] = nmod_mul(G->y[i], s, mod);
@@ -136,9 +137,7 @@ nmod_geometric_progression_init(nmod_geometric_progression_t G, ulong r, slong l
         inv_qk = nmod_mul(inv_qk, inv_q, mod);  /* 1 / q**i */
     }
 
-    _nmod_vec_clear(prod_diff);
     _nmod_vec_clear(inv_diff);
-    _nmod_vec_clear(diff);
 }
 
 void
