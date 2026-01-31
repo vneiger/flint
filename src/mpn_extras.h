@@ -243,7 +243,7 @@ void flint_mpn_mulmod_preinvn_2(mp_ptr r,
         mp_srcptr a, mp_srcptr b,
         mp_srcptr d, mp_srcptr dinv, ulong norm);
 
-char * _flint_mpn_get_str(mp_srcptr x, mp_size_t n);
+char * flint_mpn_get_str(char * res, int base, mp_srcptr x, mp_size_t xn, int negative);
 
 
 #define MPN_NORM(a, an)                         \
@@ -929,7 +929,9 @@ double flint_mpn_get_d(mp_srcptr ptr, mp_size_t size, mp_size_t sign, long exp);
 /* random ********************************************************************/
 
 void flint_mpn_rrandom(mp_ptr rp, flint_rand_t state, mp_size_t n);
+void flint_mpn_rrandomb(mp_ptr rp, flint_rand_t state, flint_bitcnt_t n);
 void flint_mpn_urandomb(mp_ptr rp, flint_rand_t state, flint_bitcnt_t n);
+void flint_mpn_urandomm(mp_ptr rp, flint_rand_t state, mp_srcptr xp, mp_size_t xn);
 
 /******************************************************************************
     Divisions where the quotient is expected to be small. All function do:

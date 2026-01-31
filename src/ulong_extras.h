@@ -41,6 +41,38 @@ ulong n_randtest(flint_rand_t state);
 ulong n_randtest_not_zero(flint_rand_t state);
 ulong n_randtest_prime(flint_rand_t state, int proved);
 
+#if FLINT64
+ULONG_EXTRAS_INLINE ulong _n_randlimb(flint_rand_t state)
+{
+    state->__randval = (state->__randval*UWORD(13282407956253574709) + UWORD(286824421));
+    state->__randval2 = (state->__randval2*UWORD(7557322358563246341) + UWORD(286824421));
+
+    return (state->__randval>>32) + ((state->__randval2>>32) << 32);
+}
+#else
+ULONG_EXTRAS_INLINE ulong _n_randlimb(flint_rand_t state)
+{
+    state->__randval = (state->__randval*UWORD(1543932465) +  UWORD(1626832771));
+    state->__randval2 = (state->__randval2*UWORD(2495927737) +  UWORD(1626832771));
+
+    return (state->__randval>>16) + ((state->__randval2>>16) << 16);
+}
+#endif
+
+ULONG_EXTRAS_INLINE ulong _n_randint(flint_rand_t state, ulong limit)
+{
+    if ((limit & (limit - 1)) == 0)
+    {
+        return _n_randlimb(state) & (limit - 1);
+    }
+    else
+    {
+        ulong hi, lo;
+        umul_ppmm(hi, lo, _n_randlimb(state), limit);
+        return hi;
+    }
+}
+
 /* Basic arithmetic **********************************************************/
 
 ulong n_revbin(ulong in, ulong bits);
@@ -138,7 +170,6 @@ ulong n_pow(ulong n, ulong exp);
 ulong _n_pow_check(ulong n, ulong exp);
 ulong n_root(ulong n, ulong root);
 ulong n_rootrem(ulong* remainder, ulong n, ulong root);
-ulong n_root_estimate(double a, int n);
 int n_is_perfect_power235(ulong n);
 int n_is_perfect_power(ulong * root, ulong n);
 
@@ -449,9 +480,6 @@ void n_cleanup_primes(void);
 const ulong * n_primes_arr_readonly(ulong n);
 const double * n_prime_inverses_arr_readonly(ulong n);
 
-int n_is_oddprime_small(ulong n);
-int n_is_oddprime_binary(ulong n);
-
 int n_is_probabprime(ulong n);
 int n_is_probabprime_fermat(ulong n, ulong i);
 int n_is_probabprime_fibonacci(ulong n);
@@ -475,8 +503,6 @@ void n_prime_pi_bounds(ulong *lo, ulong *hi, ulong n);
 ulong n_nextprime(ulong n, int FLINT_UNUSED(proved));
 
 /* Factorisation *************************************************************/
-
-#define FLINT_ODDPRIME_SMALL_CUTOFF 4096
 
 #define FLINT_FACTOR_TRIAL_PRIMES_BEFORE_PRIMALITY_TEST 64
 
