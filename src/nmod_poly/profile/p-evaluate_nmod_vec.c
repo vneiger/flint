@@ -9,13 +9,13 @@
    (at your option) any later version.  See <https://www.gnu.org/licenses/>.
 */
 
-#include "stdlib.h"  /* for atoi */
+#include <string.h>
+#include <stdlib.h>  /* for atoi */
 #include "nmod.h"
 #include "profiler.h"
 #include "ulong_extras.h"
 #include "nmod_poly.h"
 #include "nmod_vec.h"
-#include <string.h>
 
 #define __NB_ITER 10
 
