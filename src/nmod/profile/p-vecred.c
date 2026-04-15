@@ -1,5 +1,20 @@
-#include <immintrin.h>
+/*
+    Copyright (C) 2026 Vincent Neiger
+
+    This file is part of FLINT.
+
+    FLINT is free software: you can redistribute it and/or modify it under
+    the terms of the GNU Lesser General Public License (LGPL) as published
+    by the Free Software Foundation; either version 3 of the License, or
+    (at your option) any later version.  See <https://www.gnu.org/licenses/>.
+*/
+
 #include <stdlib.h>  /* for atoi */
+
+/* FIXME might not work if not gcc! */
+#define FLINT_NO_VECTORIZE __attribute__((optimize("no-tree-vectorize")))
+/* FIXME comment out if machine does not have avx512 */
+#define FLINT_HAVE_AVX512
 
 #include "flint/flint.h"
 #include "flint/longlong.h"
@@ -7,10 +22,10 @@
 #include "flint/profiler.h"
 #include "flint/nmod_vec.h"
 #include "flint/ulong_extras.h"
-#include "flint/machine_vectors.h"
+#ifdef FLINT_HAVE_AVX512
+    #include <immintrin.h>
+#endif // FLINT_HAVE_AVX512
 
-#define FLINT_NO_VECTORIZE __attribute__((optimize("no-tree-vectorize")))
-#define FLINT_HAVE_AVX512 1
 
 // must be a multiple of 8
 #define LEN 10000
@@ -842,9 +857,9 @@ int main(int argc, char ** argv)
         "red1: barrett2_lazy",
         "red1: barrett2_lazy unroll",
         "red1: fast_lazy (!lazy!)",
-        "red1: fast_lazy no vec (!lazy!)",
+        "red1: fast_lazy novec (!lazy!)",
         "red1: fast",
-        "red1: fast no vec",
+        "red1: fast novec",
         "red2: nmod2_red2",
         "red2: nmod2_red2 unroll",
         "red2: barrett22 (<64b)",
