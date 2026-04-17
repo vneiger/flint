@@ -10,20 +10,21 @@
 */
 
 #include <stdlib.h>  /* for atoi */
-
-/* FIXME might not work if not gcc! */
-#define FLINT_NO_VECTORIZE __attribute__((optimize("no-tree-vectorize")))
-/* FIXME comment out if machine does not have avx512 */
-#define FLINT_HAVE_AVX512
-
 #include "flint/flint.h"
 #include "flint/longlong.h"
 #include "flint/longlong_div_gnu.h"
 #include "flint/profiler.h"
 #include "flint/nmod_vec.h"
 #include "flint/ulong_extras.h"
+
+/* FIXME might not work if not gcc! */
+#define FLINT_NO_VECTORIZE __attribute__((optimize("no-tree-vectorize")))
+/* FIXME comment out if machine does not have avx512 */
+#define FLINT_HAVE_AVX512
+
 #ifdef FLINT_HAVE_AVX512
-    #include <immintrin.h>
+#  include <immintrin.h>
+#  include <flint/machine_vectors.h>
 #endif // FLINT_HAVE_AVX512
 
 
@@ -60,12 +61,6 @@ ulong n_modred_barrett_simd(ulong a, ulong n_pr, ulong n)
         a -= n;
     if (a >= n)
         a -= n;
-
-    // ulong res, p_hi, p_lo;
-    // umul_ppmm(p_hi, p_lo, n_pr, a);
-    // res = a - p_hi * n;
-    // if (res >= n)
-    //     res -= n;
 
     return a;
 }
@@ -782,6 +777,167 @@ int check(flint_bitcnt_t bits)
 }
 
 
+/***************
+*  FFT_SMALL  *
+***************/
+
+FLINT_FORCE_INLINE void vec8n_store_unaligned(ulong* z, vec8n a) {
+    vec4n_store_unaligned(z+0, a.e1);
+    vec4n_store_unaligned(z+4, a.e2);
+}
+
+FLINT_FORCE_INLINE vec8n vec8d_convert_limited_vec8n(vec8d a) {
+    vec8n z = {vec4d_convert_limited_vec4n(a.e1), vec4d_convert_limited_vec4n(a.e2)};
+    return z;
+}
+
+FLINT_FORCE_INLINE vec4n vec4n_bit_shift_left(vec4n a, ulong b) {
+    return _mm256_slli_epi64(a, b);
+}
+
+FLINT_FORCE_INLINE vec8n vec8n_bit_shift_left(vec8n a, ulong b) {
+    vec8n z = {vec4n_bit_shift_left(a.e1, b), vec4n_bit_shift_left(a.e2, b)};
+    return z;
+}
+
+void
+prof_nmod_vec_reduce_fft_small_256(nn_ptr res, nn_srcptr vec, slong len, nmod_t mod)
+{
+    slong i;
+
+    vec4d p = vec4d_set_d((double) mod.n);
+    vec4d pinv = vec4d_set_d(1.0 / mod.n);
+
+    for (i = 0; i + 3 < len; i += 4)
+    {
+        vec4n t = vec4n_load_unaligned(vec + i);
+        vec4d d = vec4n_convert_limited_vec4d(t);
+        vec4d r = vec4d_reduce_to_0n(d, p, pinv);
+        vec4n u = vec4d_convert_limited_vec4n(r);
+        vec4n_store_unaligned(res + i, u);
+    }
+}
+
+void
+prof_nmod_vec_reduce_fft_small_512(nn_ptr res, nn_srcptr vec, slong len, nmod_t mod)
+{
+    slong i;
+
+    vec8d p = vec8d_set_d((double) mod.n);
+    vec8d pinv = vec8d_set_d(1.0 / mod.n);
+
+    for (i = 0; i + 7 < len; i += 8)
+    {
+        vec8n t = vec8n_load_unaligned(vec + i);
+        vec8d d = vec8n_convert_limited_vec8d(t);
+        vec8d r = vec8d_reduce_to_0n(d, p, pinv);
+        vec8n u = vec8d_convert_limited_vec8n(r);
+        vec8n_store_unaligned(res + i, u);
+    }
+}
+
+
+/* the three ones are unused/unmodified yet */
+void
+_nmod_vec_reduce_simd2(nn_ptr res, nn_srcptr vec, slong len, nmod_t mod)
+{
+    slong i;
+
+    vec8d n = vec8d_set_d(mod.n);
+    vec8d ninv = vec8d_set_d(1.0 / mod.n);
+
+    ulong n32 = UWORD(1) << 32;
+
+    for (i = 0; i + 7 < len; i += 8)
+    {
+        vec8n t = vec8n_load_unaligned(vec + i);
+        vec8d tlo = vec8n_convert_limited_vec8d(vec8n_bit_and(t, vec8n_set_n(n32-1)));
+        vec8d thi = vec8n_convert_limited_vec8d(vec8n_bit_shift_right_32(t));
+        vec8d d = vec8d_add(tlo, vec8d_mulmod(thi, vec8d_set_d(n32), n, ninv));
+        vec8d r = vec8d_reduce_to_0n(d, n, ninv);
+        vec8n u = vec8d_convert_limited_vec8n(r);
+        vec8n_store_unaligned(res + i, u);
+    }
+}
+
+void
+_nmod_vec_reduce_ll_simd2(nn_ptr res, nn_srcptr vec, nn_srcptr vec2, slong len, nmod_t mod)
+{
+    slong i;
+
+    vec8d n = vec8d_set_d(mod.n);
+    vec8d ninv = vec8d_set_d(1.0 / mod.n);
+
+    // xxx: distinguish mod / not mod
+    ulong n32 = UWORD(1) << 32;
+    ulong n64 = nmod_mul(n32, n32, mod);
+    ulong n96 = nmod_mul(n64, n32, mod);
+
+    for (i = 0; i + 7 < len; i += 8)
+    {
+        vec8n t = vec8n_load_unaligned(vec + i);
+        vec8d tlo = vec8n_convert_limited_vec8d(vec8n_bit_and(t, vec8n_set_n(n32-1)));
+        vec8d thi = vec8n_convert_limited_vec8d(vec8n_bit_shift_right_32(t));
+
+        vec8n v = vec8n_load_unaligned(vec2 + i);
+        vec8d vlo = vec8n_convert_limited_vec8d(vec8n_bit_and(v, vec8n_set_n(n32-1)));
+        vec8d vhi = vec8n_convert_limited_vec8d(vec8n_bit_shift_right_32(v));
+
+        vec8d d = vec8d_add(tlo, vec8d_mulmod(thi, vec8d_set_d(n32), n, ninv));
+              d = vec8d_add(d, vec8d_mulmod(vlo, vec8d_set_d(n64), n, ninv));
+              d = vec8d_add(d, vec8d_mulmod(vhi, vec8d_set_d(n96), n, ninv));
+
+        vec8d r = vec8d_reduce_to_0n(d, n, ninv);
+        vec8n u = vec8d_convert_limited_vec8n(r);
+        vec8n_store_unaligned(res + i, u);
+    }
+}
+
+void
+_nmod_vec_reduce_ll_simd3(nn_ptr res, nn_srcptr vec, nn_srcptr vec2, slong len, nmod_t mod)
+{
+    slong i;
+
+    vec8d n = vec8d_set_d(mod.n);
+    vec8d ninv = vec8d_set_d(1.0 / mod.n);
+
+    ulong n32 = UWORD(1) << 32;
+    ulong n48 = UWORD(1) << 48; /* FIXME modified, was << 32 */
+    ulong n64 = nmod_mul(n32, n32, mod);
+    ulong n96 = nmod_mul(n64, n32, mod);
+
+    for (i = 0; i + 7 < len; i += 8)
+    {
+        vec8n tlo = vec8n_load_unaligned(vec + i);
+        vec8n thi = vec8n_load_unaligned(vec2 + i);
+
+        vec8n u0 = vec8n_bit_and(tlo, vec8n_set_n(n48-1));
+
+        vec8n u1lo = vec8n_bit_shift_right(tlo, 48);
+        vec8n u1hi = vec8n_bit_and(thi, vec8n_set_n(n32-1));
+              u1hi = vec8n_bit_shift_left(thi, 16);
+        vec8n u1 = vec8n_bit_and(u1lo, u1hi);
+
+        vec8n u2 = vec8n_bit_shift_right(thi, 32);
+
+        vec8d c0 = vec8n_convert_limited_vec8d(u0);
+        vec8d c1 = vec8n_convert_limited_vec8d(u1);
+        vec8d c2 = vec8n_convert_limited_vec8d(u2);
+
+        vec8d d = vec8d_add(c0, vec8d_mulmod(c1, vec8d_set_d(n48), n, ninv));
+              d = vec8d_add(d,  vec8d_mulmod(c2, vec8d_set_d(n96), n, ninv));
+
+        vec8d r = vec8d_reduce_to_0n(d, n, ninv);
+        vec8n u = vec8d_convert_limited_vec8n(r);
+        vec8n_store_unaligned(res + i, u);
+    }
+}
+
+/*******************
+*  END FFT_SMALL  *
+*******************/
+
+
 #define SAMPLE(fun)                                       \
 void sample_##fun(void * arg, ulong count)                \
 {                                                         \
@@ -830,6 +986,10 @@ SAMPLE(fast_lazy_novec)
 SAMPLE(fast)
 SAMPLE(fast_novec)
 
+/* fft_small */
+SAMPLE(fft_small_256)
+SAMPLE(fft_small_512)
+
 SAMPLE(nmod2_red2)
 SAMPLE(nmod2_red2_unroll)
 SAMPLE(barrett22)
@@ -839,7 +999,7 @@ SAMPLE(barrett22_ter)
 
 int main(int argc, char ** argv)
 {
-    const slong nb = 21;
+    const slong nb = 23;
     double min[nb], max[nb];
     char * description[] =
     {
@@ -860,6 +1020,10 @@ int main(int argc, char ** argv)
         "red1: fast_lazy novec (!lazy!)",
         "red1: fast",
         "red1: fast novec",
+#ifdef FLINT_HAVE_AVX512
+        "red1: fft_small_256",
+        "red1: fft_small_512",
+#endif // FLINT_HAVE_AVX512
         "red2: nmod2_red2",
         "red2: nmod2_red2 unroll",
         "red2: barrett22 (<64b)",
@@ -910,6 +1074,13 @@ int main(int argc, char ** argv)
     i++;
     prof_repeat(min+i, max+i, sample_fast_novec, (void *) &info);
     i++;
+
+#ifdef FLINT_HAVE_AVX512
+    prof_repeat(min+i, max+i, sample_fft_small_256, (void *) &info);
+    i++;
+    prof_repeat(min+i, max+i, sample_fft_small_512, (void *) &info);
+    i++;
+#endif // FLINT_HAVE_AVX512
 
     prof_repeat(min+i, max+i, sample_nmod2_red2, (void *) &info);
     i++;
