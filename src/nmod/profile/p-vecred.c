@@ -11,6 +11,7 @@
 
 #include <stdlib.h>  /* for atoi */
 #include "flint/flint.h"
+#include "flint/config.h"
 #include "flint/longlong.h"
 #include "flint/longlong_div_gnu.h"
 #include "flint/profiler.h"
@@ -19,7 +20,8 @@
 
 /* FIXME might not work if not gcc! */
 #define FLINT_NO_VECTORIZE __attribute__((optimize("no-tree-vectorize")))
-/* FIXME comment out if machine does not have avx512 */
+/* FIXME comment out if machine does not have avx2 or avx512 */
+#define FLINT_HAVE_AVX2
 #define FLINT_HAVE_AVX512
 
 #ifdef FLINT_HAVE_AVX512
@@ -65,6 +67,18 @@ ulong n_modred_barrett_simd(ulong a, ulong n_pr, ulong n)
     return a;
 }
 
+#ifdef FLINT_HAVE_AVX2
+/* same with explicit vectorization */
+/* a[i] >= n[i] ? a[i] - n[i] : a[i] */
+/* avx2 version, without _mm256_min_epu64 which requires AVX512F*/
+FLINT_FORCE_INLINE __m256i _mm256_subtract_if_cmpge(__m256i a, __m256i n)
+{
+    __m256i cmp = _mm256_cmpgt_epi64(n, a);
+    __m256i sub_mask = _mm256_andnot_si256(cmp, n);
+    return _mm256_sub_epi64(a, sub_mask);
+}
+#endif  /* FLINT_HAVE_AVX512 */
+
 #ifdef FLINT_HAVE_AVX512
 /* same with explicit vectorization */
 /* a[i] >= n[i] ? a[i] - n[i] : a[i] */
@@ -90,7 +104,7 @@ FLINT_FORCE_INLINE __m512i _mm512_mulhi_lazy_epu64(__m512i a, __m512i b)
 }
 
 FLINT_FORCE_INLINE __m512i
-_mm512_mulmod_barrett(__m512i a, __m512i b, __m512i a_pr, __m512i n)
+_mm512_mulmod_shoup(__m512i a, __m512i b, __m512i a_pr, __m512i n)
 {
     __m512i mulhi = _mm512_mulhi_lazy_epu64(b, a_pr);
     __m512i mullo1 = _mm512_mullo_epi64(b, a);
@@ -166,25 +180,63 @@ void nmod_precomp_fast(ulong * redp, ulong * shift, ulong n)
 }
 
 static inline
-ulong n_modred_fast_lazy(ulong a, ulong n, ulong redp, ulong shift)
+ulong n_modred_fast_lazy(ulong a, ulong n, ulong redp_hi, ulong shift_m64)
 {
     ulong q, a_red;
-    q = ((a >> 32) * (redp >> 32)) >> (shift - 64);
+    q = ((a >> 32) * redp_hi) >> shift_m64;
     a_red = a - q * n;
     return a_red;
 }
 
 static inline
-ulong n_modred_fast(ulong a, ulong n, ulong redp, ulong shift)
+ulong n_modred_fast(ulong a, ulong n, ulong redp_hi, ulong shift_m64)
 {
     ulong q, a_red;
-    q = ((a >> 32) * (redp >> 32)) >> (shift - 64);
+    q = ((a >> 32) * redp_hi) >> shift_m64;
     a_red = a - q * n;
     if (a_red >= n)
         a_red -= n;
     return a_red;
 }
 
+#ifdef FLINT_HAVE_AVX2
+/* same with explicit vectorization */
+FLINT_FORCE_INLINE
+__m256i n_modred_fast_simdexplicit_256(__m256i a, __m256i n, __m256i redp_hi, __m256i shift_m64)
+{
+    /* a_hi * redp_hi */
+    __m256i a_hi = _mm256_shuffle_epi32(a, 0xB1);
+    __m256i q = _mm256_mul_epu32(a_hi, redp_hi);
+    q = _mm256_srlv_epi64(q, shift_m64);
+    /* qn = (q >> shift_m64) * n */
+    __m256i qn_lo = _mm256_mul_epu32(q, n);
+    __m256i qn_hi = _mm256_mullo_epi32(_mm256_shuffle_epi32(q, 0xB1), n);
+    /* a_red = a - qn */
+    /* __m256i qn = _mm256_add_epi64(qn_lo, qn_hi); */
+    /* __m256i r = _mm256_sub_epi64(a, qn); */
+    /* seems preferable (and compiler does compile it with two `sub`): */
+    __m256i r = _mm256_sub_epi64(a, qn_lo);
+    r = _mm256_sub_epi64(r, qn_hi);
+    return _mm256_subtract_if_cmpge(r, n);
+}
+#endif  /* FLINT_HAVE_AVX2 */
+
+#ifdef FLINT_HAVE_AVX512
+/* same with explicit vectorization */
+/* NOTE could use a single int for shift, but would that bring anything? */
+FLINT_FORCE_INLINE
+__m512i n_modred_fast_simdexplicit_512(__m512i a, __m512i n, __m512i redp_hi, __m512i shift_m64)
+{
+    /* a_hi * redp_hi */
+    __m512i a_hi = _mm512_shuffle_epi32(a, 0xB1);
+    __m512i q = _mm512_mul_epu32(a_hi, redp_hi);
+    /* qn = (q >> shift_m64) * n */
+    __m512i qn = _mm512_mullo_epi64(_mm512_srlv_epi64(q, shift_m64), n);
+    /* a_red = a - qn */
+    __m512i a_red = _mm512_sub_epi64(a, qn);
+    return _mm512_subtract_if_cmpge(a_red, n);
+}
+#endif  /* FLINT_HAVE_AVX512 */
 
 /*--------------------------------------*/
 /* reduce vector: res[i] = vec[i] % n   */
@@ -329,8 +381,10 @@ void prof_nmod_vec_reduce_fast_lazy(nn_ptr res, nn_srcptr vec, slong len, nmod_t
     ulong redp;
     ulong shift;
     nmod_precomp_fast(&redp, &shift, mod.n);
+    ulong redp_hi = redp >> 32;
+    ulong shift_m64 = shift - 64;
     for (slong i = 0 ; i < len; i++)
-        res[i] = n_modred_fast_lazy(vec[i], mod.n, redp, shift);
+        res[i] = n_modred_fast_lazy(vec[i], mod.n, redp_hi, shift_m64);
 }
 
 FLINT_NO_VECTORIZE
@@ -339,13 +393,15 @@ void prof_nmod_vec_reduce_fast_lazy_novec(nn_ptr res, nn_srcptr vec, slong len, 
     ulong redp;
     ulong shift;
     nmod_precomp_fast(&redp, &shift, mod.n);
+    ulong redp_hi = redp >> 32;
+    ulong shift_m64 = shift - 64;
     slong i;
     for (i = 0; i+3 < len; i+=4)
     {
-        res[i+0] = n_modred_fast_lazy(vec[i+0], mod.n, redp, shift);
-        res[i+1] = n_modred_fast_lazy(vec[i+1], mod.n, redp, shift);
-        res[i+2] = n_modred_fast_lazy(vec[i+2], mod.n, redp, shift);
-        res[i+3] = n_modred_fast_lazy(vec[i+3], mod.n, redp, shift);
+        res[i+0] = n_modred_fast_lazy(vec[i+0], mod.n, redp_hi, shift_m64);
+        res[i+1] = n_modred_fast_lazy(vec[i+1], mod.n, redp_hi, shift_m64);
+        res[i+2] = n_modred_fast_lazy(vec[i+2], mod.n, redp_hi, shift_m64);
+        res[i+3] = n_modred_fast_lazy(vec[i+3], mod.n, redp_hi, shift_m64);
     }
     for ( ; i < len; i++)
         res[i] = n_modred_fast_lazy(vec[i], mod.n, redp, shift);
@@ -356,8 +412,10 @@ void prof_nmod_vec_reduce_fast(nn_ptr res, nn_srcptr vec, slong len, nmod_t mod)
     ulong redp;
     ulong shift;
     nmod_precomp_fast(&redp, &shift, mod.n);
+    ulong redp_hi = redp >> 32;
+    ulong shift_m64 = shift - 64;
     for (slong i = 0 ; i < len; i++)
-        res[i] = n_modred_fast(vec[i], mod.n, redp, shift);
+        res[i] = n_modred_fast(vec[i], mod.n, redp_hi, shift_m64);
 }
 
 FLINT_NO_VECTORIZE
@@ -366,18 +424,55 @@ void prof_nmod_vec_reduce_fast_novec(nn_ptr res, nn_srcptr vec, slong len, nmod_
     ulong redp;
     ulong shift;
     nmod_precomp_fast(&redp, &shift, mod.n);
+    ulong redp_hi = redp >> 32;
+    ulong shift_m64 = shift - 64;
     slong i;
     for (i = 0; i+3 < len; i+=4)
     {
-        res[i+0] = n_modred_fast(vec[i+0], mod.n, redp, shift);
-        res[i+1] = n_modred_fast(vec[i+1], mod.n, redp, shift);
-        res[i+2] = n_modred_fast(vec[i+2], mod.n, redp, shift);
-        res[i+3] = n_modred_fast(vec[i+3], mod.n, redp, shift);
+        res[i+0] = n_modred_fast(vec[i+0], mod.n, redp_hi, shift_m64);
+        res[i+1] = n_modred_fast(vec[i+1], mod.n, redp_hi, shift_m64);
+        res[i+2] = n_modred_fast(vec[i+2], mod.n, redp_hi, shift_m64);
+        res[i+3] = n_modred_fast(vec[i+3], mod.n, redp_hi, shift_m64);
     }
     for ( ; i < len; i++)
-        res[i] = n_modred_fast(vec[i], mod.n, redp, shift);
+        res[i] = n_modred_fast(vec[i], mod.n, redp_hi, shift_m64);
 }
 
+#ifdef FLINT_HAVE_AVX2
+void prof_nmod_vec_reduce_fast_simdexplicit_256(nn_ptr res, nn_srcptr vec, slong len, nmod_t mod)
+{
+    ulong redp;
+    ulong shift;
+    nmod_precomp_fast(&redp, &shift, mod.n);
+    __m256i redp_hi = _mm256_set1_epi64x(redp >> 32);
+    __m256i shift_m64 = _mm256_set1_epi64x(shift - 64);
+    __m256i vecn = _mm256_set1_epi64x(mod.n);
+    for (slong i = 0; i+3 < len; i+=4)
+    {
+        __m256i vvec = _mm256_loadu_si256((__m256i *) (vec+i));
+        vvec = n_modred_fast_simdexplicit_256(vvec, vecn, redp_hi, shift_m64);
+        _mm256_storeu_si256((__m256i *) (res+i), vvec);
+    }
+}
+#endif // FLINT_HAVE_AVX256
+
+#ifdef FLINT_HAVE_AVX512
+void prof_nmod_vec_reduce_fast_simdexplicit_512(nn_ptr res, nn_srcptr vec, slong len, nmod_t mod)
+{
+    ulong redp;
+    ulong shift;
+    nmod_precomp_fast(&redp, &shift, mod.n);
+    __m512i redp_hi = _mm512_set1_epi64(redp >> 32);
+    __m512i shift_m64 = _mm512_set1_epi64(shift - 64);
+    __m512i vecn = _mm512_set1_epi64(mod.n);
+    for (slong i = 0; i+7 < len; i+=8)
+    {
+        __m512i vvec = _mm512_loadu_si512(vec+i);
+        vvec = n_modred_fast_simdexplicit_512(vvec, vecn, redp_hi, shift_m64);
+        _mm512_storeu_si512(res+i, vvec);
+    }
+}
+#endif // FLINT_HAVE_AVX512
 
 /*----------------------------------------*/
 /*        res[i] = reduce double word     */
@@ -634,8 +729,10 @@ int check(flint_bitcnt_t bits)
                 ulong shift;
                 ulong redp;
                 nmod_precomp_fast(&redp, &shift, n);
+                ulong redp_hi = redp >> 32;
+                ulong shift_m64 = shift - 64;
 
-                candidate = n_modred_fast_lazy(a_lo, n, redp, shift);
+                candidate = n_modred_fast_lazy(a_lo, n, redp_hi, shift_m64);
                 if (witness != candidate && witness != candidate - n)
                 {
                     flint_printf("\n\n\nFAILURE 1 limb modred_fast_lazy!! ");
@@ -643,13 +740,47 @@ int check(flint_bitcnt_t bits)
                     return 0;
                 }
 
-                candidate = n_modred_fast(a_lo, n, redp, shift);
+                candidate = n_modred_fast(a_lo, n, redp_hi, shift_m64);
                 if (witness != candidate)
                 {
                     flint_printf("\n\n\nFAILURE 1 limb modred_fast!! ");
                     flint_printf("n = %wu, a = %wu, shift = %wu, n_pr = %wu witness = %wu, candidate = %wu\n\n\n", n, a_lo, shift, redp, witness, candidate);
                     return 0;
                 }
+
+#ifdef FLINT_HAVE_AVX2
+                {
+                    __m256i vec_redp_hi = _mm256_set1_epi64x(redp >> 32);
+                    __m256i vec_shift_m64 = _mm256_set1_epi64x(shift - 64);
+                    __m256i vecn = _mm256_set1_epi64x(mod.n);
+                    __m256i veca = _mm256_set1_epi64x(a_lo);
+                    __m256i veccand = n_modred_fast_simdexplicit_256(veca, vecn, vec_redp_hi, vec_shift_m64);
+                    candidate = veccand[0];
+
+                    if (witness != candidate)
+                    {
+                        flint_printf("\n\n\nFAILURE 1 limb modred_fast_simdexplicit_256!! ");
+                        flint_printf("n = %wu, a = %wu, shift = %wu, n_pr = %wu witness = %wu, candidate = %wu\n\n\n", n, a_lo, shift, redp, witness, candidate);
+                        return 0;
+                    }
+                }
+#endif // FLINT_HAVE_AVX512
+
+#ifdef FLINT_HAVE_AVX512
+                __m512i vec_redp_hi = _mm512_set1_epi64(redp >> 32);
+                __m512i vec_shift_m64 = _mm512_set1_epi64(shift - 64);
+                __m512i vecn = _mm512_set1_epi64(mod.n);
+                __m512i veca = _mm512_set1_epi64(a_lo);
+                __m512i veccand = n_modred_fast_simdexplicit_512(veca, vecn, vec_redp_hi, vec_shift_m64);
+                candidate = veccand[0];
+
+                if (witness != candidate)
+                {
+                    flint_printf("\n\n\nFAILURE 1 limb modred_fast_simdexplicit_512!! ");
+                    flint_printf("n = %wu, a = %wu, shift = %wu, n_pr = %wu witness = %wu, candidate = %wu\n\n\n", n, a_lo, shift, redp, witness, candidate);
+                    return 0;
+                }
+#endif // FLINT_HAVE_AVX512
             }
         }
 
@@ -775,7 +906,6 @@ int check(flint_bitcnt_t bits)
     FLINT_TEST_CLEAR(state);
     return 1;
 }
-
 
 /***************
 *  FFT_SMALL  *
@@ -985,10 +1115,15 @@ SAMPLE(fast_lazy)
 SAMPLE(fast_lazy_novec)
 SAMPLE(fast)
 SAMPLE(fast_novec)
+#ifdef FLINT_HAVE_AVX2
+    SAMPLE(fast_simdexplicit_256)
+#endif
+#ifdef FLINT_HAVE_AVX512
+    SAMPLE(fast_simdexplicit_512)
 
-/* fft_small */
-SAMPLE(fft_small_256)
-SAMPLE(fft_small_512)
+    SAMPLE(fft_small_256)  /* fft_small */
+    SAMPLE(fft_small_512)  /* fft_small */
+#endif // FLINT_HAVE_AVX512
 
 SAMPLE(nmod2_red2)
 SAMPLE(nmod2_red2_unroll)
@@ -999,7 +1134,7 @@ SAMPLE(barrett22_ter)
 
 int main(int argc, char ** argv)
 {
-    const slong nb = 23;
+    const slong nb = 25;
     double min[nb], max[nb];
     char * description[] =
     {
@@ -1020,7 +1155,11 @@ int main(int argc, char ** argv)
         "red1: fast_lazy novec (!lazy!)",
         "red1: fast",
         "red1: fast novec",
+#ifdef FLINT_HAVE_AVX2
+        "red1: fast_simdexplicit_256",
+#endif
 #ifdef FLINT_HAVE_AVX512
+        "red1: fast_simdexplicit_512",
         "red1: fft_small_256",
         "red1: fft_small_512",
 #endif // FLINT_HAVE_AVX512
@@ -1075,7 +1214,14 @@ int main(int argc, char ** argv)
     prof_repeat(min+i, max+i, sample_fast_novec, (void *) &info);
     i++;
 
+#ifdef FLINT_HAVE_AVX2
+    prof_repeat(min+i, max+i, sample_fast_simdexplicit_256, (void *) &info);
+    i++;
+#endif
 #ifdef FLINT_HAVE_AVX512
+    prof_repeat(min+i, max+i, sample_fast_simdexplicit_512, (void *) &info);
+    i++;
+
     prof_repeat(min+i, max+i, sample_fft_small_256, (void *) &info);
     i++;
     prof_repeat(min+i, max+i, sample_fft_small_512, (void *) &info);
