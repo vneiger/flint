@@ -73,16 +73,6 @@ _fmpq_poly_compose_series_kinoshita_li(fmpz *res, fmpz_t rden,
     fmpz *Qchain_num = _fmpz_vec_init(qchain_total);
     fmpz *Qchain_den = _fmpz_vec_init(L + 1);   /* one denominator per level */
 
-    /* ---- Build P_num = f.reverse(n-1), P_den = den1 ---- */
-    fmpz *P_num = _fmpz_vec_init(n);
-    fmpz_t P_den;
-    fmpz_init_set(P_den, den1);
-    {
-        slong glen = FLINT_MIN(len1, n);
-        for (slong i = 0; i < glen; i++)
-            fmpz_set(P_num + (n - 1 - i), poly1 + i);
-    }
-
     /* ---- Initialise Q_0 = 1 - y*g(x) ---- */
     {
         fmpz *Q0_num = Qchain_num + qoff_arr[0];
@@ -175,11 +165,20 @@ _fmpq_poly_compose_series_kinoshita_li(fmpz *res, fmpz_t rden,
     slong yn_W = n;
 
     {
-        slong jmax = FLINT_MIN(ydeg_arr[L], n);
-        _fmpq_poly_div_series(W_num, W_den,
-                              P_num, P_den, n,
+        /* ---- Build P_num = f.reverse(n-1), P_den = den1 ---- */
+        slong glen = FLINT_MIN(n, len1);
+        fmpz *P_num = _fmpz_vec_init(glen);
+
+        _fmpz_poly_reverse(P_num, poly1, glen, glen);
+
+        slong jmax = FLINT_MIN(ydeg_arr[L], glen);
+        _fmpq_poly_div_series(W_num + n - glen, W_den,
+                              P_num, den1, glen,
                               Qchain_num + qoff_arr[L], Qchain_den + L, jmax,
-                              n);
+                              glen);
+        /* Low (n - glen) coefficients of W are a priori zero. */
+
+        _fmpz_vec_clear(P_num, glen);
     }
 
     /* ================================================================
@@ -278,8 +277,6 @@ _fmpq_poly_compose_series_kinoshita_li(fmpz *res, fmpz_t rden,
 
     _fmpz_vec_clear(W_num, W_alloc);
     fmpz_clear(W_den);
-    _fmpz_vec_clear(P_num, n);
-    fmpz_clear(P_den);
     _fmpz_vec_clear(Qchain_num, qchain_total);
     _fmpz_vec_clear(Qchain_den, L + 1);
 

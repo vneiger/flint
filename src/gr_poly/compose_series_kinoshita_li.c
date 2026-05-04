@@ -133,6 +133,9 @@ _gr_poly_compose_series_kinoshita_li(gr_ptr res, gr_srcptr poly1, slong len1,
         return status;
     }
 
+    len1 = FLINT_MIN(len1, n);
+    len2 = FLINT_MIN(len2, n);
+
     /* ---- Compute level count L = ceil(log2(n)) ---- */
     L = 0;
     { slong tmp = n; while (tmp > 1) { tmp = (tmp + 1) / 2; L++; } }
@@ -174,17 +177,54 @@ _gr_poly_compose_series_kinoshita_li(gr_ptr res, gr_srcptr poly1, slong len1,
     qoff_arr[L]   = qchain_total;
     qchain_total += xn_arr[L] * ydeg_arr[L];
 
-    /* ---- Allocate Qchain ---- */
+    /* ---- Compute scratch_total: maximum KS working memory across all levels ---- */
+    /*
+     * Both passes use three temporary buffers laid out consecutively in a
+     * single pre-allocated scratch vector, avoiding GR_TMP_INIT_VEC and
+     * GR_TMP_CLEAR_VEC calls inside the loops.
+     *
+     * Downward level k: Qks (qks_len) | Qneg_ks (qks_len) | Rks (rks_len).
+     * Upward level k:   Qneg_ks (qneg_ks_len) | W_ks (W_ks_len) | R_rks (R_rks_len).
+     *
+     * scratch_total = max over all levels of the per-level total size.
+     */
+    slong scratch_total = 0;
+    {
+        slong yn_W_pre = n;
+        for (k = 0; k < L; k++)
+        {
+            slong xn   = xn_arr[k];
+            slong ydeg = ydeg_arr[k];
+            slong xnh  = xn_arr[k + 1];
+            slong s       = 2 * ydeg - 1;
+            slong qks_len = (xn - 1) * s + ydeg;
+            slong rks_len = s * (2 * xnh - 1);
+            scratch_total = FLINT_MAX(scratch_total, 2 * qks_len + rks_len);
+        }
+        for (k = L - 1; k >= 0; k--)
+        {
+            slong xn   = xn_arr[k];
+            slong xnh  = xn_arr[k + 1];
+            slong ydeg = ydeg_arr[k];
+            slong ylo  = ylo_arr[k];
+            slong ylor = ylo_arr[k + 1];
+            slong yn_r      = n - ylor;
+            slong yslice_lo = ylo - ylor;
+            slong s           = ydeg + yn_W_pre - 1;
+            slong qneg_ks_len = (xn - 1) * s + ydeg;
+            slong W_ks_len    = 2 * (xnh - 1) * s + yn_W_pre;
+            slong R_rks_len   = (xn - 1) * s + yn_r - yslice_lo;
+            scratch_total = FLINT_MAX(scratch_total, qneg_ks_len + W_ks_len + R_rks_len);
+            yn_W_pre = n - ylo;
+        }
+    }
+
+    /* ---- Allocate Qchain and scratch ---- */
     gr_ptr Qchain;
     GR_TMP_INIT_VEC(Qchain, qchain_total, ctx);
 
-    /* ---- Build P(y) = f.reverse(n-1) ---- */
-    gr_ptr P;
-    GR_TMP_INIT_VEC(P, n, ctx);
-    {
-        slong glen = FLINT_MIN(len1, n);
-        status |= _gr_poly_reverse(GR_ENTRY(P, n - glen, sz), poly1, glen, glen, ctx);
-    }
+    gr_ptr scratch;
+    GR_TMP_INIT_VEC(scratch, scratch_total, ctx);
 
     /* ---- Initialise Q_0 = 1 - y*g(x) ---- */
     {
@@ -214,10 +254,15 @@ _gr_poly_compose_series_kinoshita_li(gr_ptr res, gr_srcptr poly1, slong len1,
         gr_srcptr Qk  = GR_ENTRY(Qchain, qoff_arr[k],     sz);
         gr_ptr    Qk1 = GR_ENTRY(Qchain, qoff_arr[k + 1], sz);
 
-        gr_ptr Qks, Qneg_ks, Rks;
-        GR_TMP_INIT_VEC(Qks,     qks_len, ctx);
-        GR_TMP_INIT_VEC(Qneg_ks, qks_len, ctx);
-        GR_TMP_INIT_VEC(Rks,     rks_len, ctx);
+        gr_ptr Qks     = GR_ENTRY(scratch, 0,           sz);
+        gr_ptr Qneg_ks = GR_ENTRY(scratch, qks_len,     sz);
+        gr_ptr Rks     = GR_ENTRY(scratch, 2 * qks_len, sz);
+
+        /* Qks and Qneg_ks must be zeroed before packing: the KS encoding
+         * occupies only qks_len of the s*xn positions; gap slots between
+         * columns must be zero for the multiply to be correct. */
+        status |= _gr_vec_zero(Qks,     qks_len, ctx);
+        status |= _gr_vec_zero(Qneg_ks, qks_len, ctx);
 
         /* Pack Q and Q(-x,y): x^i y^j -> flat index i*s + j */
         for (slong j = 0; j < ydeg; j++)
@@ -231,10 +276,8 @@ _gr_poly_compose_series_kinoshita_li(gr_ptr res, gr_srcptr poly1, slong len1,
                     status |= gr_set(GR_ENTRY(Qneg_ks, i * s + j, sz), src, ctx);
             }
 
+        /* Rks is fully written by mullow; no zeroing needed. */
         status |= _gr_poly_mullow(Rks, Qks, qks_len, Qneg_ks, qks_len, rks_len, ctx);
-
-        GR_TMP_CLEAR_VEC(Qks,     qks_len, ctx);
-        GR_TMP_CLEAR_VEC(Qneg_ks, qks_len, ctx);
 
         /* Unpack even-x columns -> Q_{k+1}.
          * [x^{2i} y^j] lives at flat index 2*i*s + j in the y-major layout. */
@@ -242,8 +285,6 @@ _gr_poly_compose_series_kinoshita_li(gr_ptr res, gr_srcptr poly1, slong len1,
             for (slong i = 0; i < xnh; i++)
                 status |= gr_set(GR_ENTRY(Qk1, j * xnh + i, sz),
                                  GR_ENTRY(Rks, 2 * i * s + j, sz), ctx);
-
-        GR_TMP_CLEAR_VEC(Rks, rks_len, ctx);
     }
 
     /* ================================================================
@@ -268,9 +309,16 @@ _gr_poly_compose_series_kinoshita_li(gr_ptr res, gr_srcptr poly1, slong len1,
     slong yn_W = n;   /* ylo_arr[L] == 0 always */
 
     {
+        /* Build P(y) = f.reverse(n-1) into scratch, which is at least n elements. */
+        gr_ptr P = scratch;
+        slong glen = FLINT_MIN(len1, n);
+        status |= _gr_poly_reverse(P, poly1, glen, glen, ctx);
+
         gr_srcptr QL = GR_ENTRY(Qchain, qoff_arr[L], sz);
-        slong jmax = FLINT_MIN(ydeg_arr[L], n);
-        status |= _gr_poly_div_series(W, P, n, QL, jmax, n, ctx);
+        slong jmax = FLINT_MIN(ydeg_arr[L], glen);
+
+        status |= _gr_poly_div_series(GR_ENTRY(W, n - glen, sz), P, glen, QL, jmax, glen, ctx);
+        /* Low (n - glen) coefficients of W are a priori zero. */
     }
 
     /* ================================================================
@@ -313,10 +361,16 @@ _gr_poly_compose_series_kinoshita_li(gr_ptr res, gr_srcptr poly1, slong len1,
         slong R_rks_len   = (xn - 1) * s + yn_r - yslice_lo;
 
         gr_srcptr Qk = GR_ENTRY(Qchain, qoff_arr[k], sz);
-        gr_ptr Qneg_ks, W_ks, R_rks;
-        GR_TMP_INIT_VEC(Qneg_ks, qneg_ks_len, ctx);
-        GR_TMP_INIT_VEC(W_ks,    W_ks_len,    ctx);
-        GR_TMP_INIT_VEC(R_rks,   R_rks_len,   ctx);
+
+        gr_ptr Qneg_ks = GR_ENTRY(scratch, 0,                      sz);
+        gr_ptr W_ks    = GR_ENTRY(scratch, qneg_ks_len,            sz);
+        gr_ptr R_rks   = GR_ENTRY(scratch, qneg_ks_len + W_ks_len, sz);
+
+        /* Qneg_ks and W_ks must be zeroed before packing: KS gap slots
+         * between columns must be zero for the multiply to be correct.
+         * R_rks is fully written by mulmid; no zeroing needed. */
+        status |= _gr_vec_zero(Qneg_ks, qneg_ks_len, ctx);
+        status |= _gr_vec_zero(W_ks,    W_ks_len,    ctx);
 
         /* Pack Qneg_k: x^i y^j -> flat index i*s + j, with sign flip for odd i */
         for (slong j = 0; j < ydeg; j++)
@@ -340,9 +394,6 @@ _gr_poly_compose_series_kinoshita_li(gr_ptr res, gr_srcptr poly1, slong len1,
                                          W_ks,    W_ks_len,
                                          yslice_lo, yslice_lo + R_rks_len, ctx);
 
-        GR_TMP_CLEAR_VEC(Qneg_ks, qneg_ks_len, ctx);
-        GR_TMP_CLEAR_VEC(W_ks,    W_ks_len,    ctx);
-
         /* Unpack y-slice [yslice_lo, yn_r) -> W (in place).
          * R_rks[k] holds product coefficient yslice_lo+k.
          * R[jsrc][i] was at i*s+jsrc; it is now at i*s+jsrc-yslice_lo in R_rks. */
@@ -355,8 +406,6 @@ _gr_poly_compose_series_kinoshita_li(gr_ptr res, gr_srcptr poly1, slong len1,
                                      GR_ENTRY(R_rks, i * s + jsrc - yslice_lo, sz), ctx);
         }
 
-        GR_TMP_CLEAR_VEC(R_rks, R_rks_len, ctx);
-
         yn_W = new_yn_W;
     }
 
@@ -364,7 +413,7 @@ _gr_poly_compose_series_kinoshita_li(gr_ptr res, gr_srcptr poly1, slong len1,
     status |= _gr_vec_set(res, W, n, ctx);
 
     GR_TMP_CLEAR_VEC(W, W_alloc, ctx);
-    GR_TMP_CLEAR_VEC(P, n, ctx);
+    GR_TMP_CLEAR_VEC(scratch, scratch_total, ctx);
     GR_TMP_CLEAR_VEC(Qchain, qchain_total, ctx);
 
     flint_free(xn_arr);
