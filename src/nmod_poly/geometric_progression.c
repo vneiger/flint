@@ -13,9 +13,9 @@
 #include "nmod.h"
 #include "nmod_vec.h"
 #include "nmod_poly.h"
-#include "impl.h"
 
 /* specialized for moduli that support n_mulmod_shoup */
+static
 void _nmod_geometric_progression_evaluate_init_nonfullword(nmod_geometric_progression_t G,
                                                            ulong r, slong len, nmod_t mod,
                                                            ulong q, ulong q_pr_quo, ulong q_pr_rem,
@@ -23,7 +23,7 @@ void _nmod_geometric_progression_evaluate_init_nonfullword(nmod_geometric_progre
                                                            ulong inv_q, ulong inv_q_pr_quo, ulong inv_q_pr_rem)
 {
     /* G->ev_f = sum_{0 <= i < 2*len - 1} q**(i*i/2) * x**i */
-    /* G->ev_s[i] = 1 / q**(i*i/2)                          */
+    /* G->ev_s[i] = 1 / q**(i*i/2) = 1 / r**(i*i)           */
     nmod_poly_init2_preinv(G->ev_f, mod.n, mod.ninv, 2*len - 1);
     G->ev_s = _nmod_vec_init(len);
 
@@ -50,6 +50,7 @@ void _nmod_geometric_progression_evaluate_init_nonfullword(nmod_geometric_progre
 }
 
 /* general variant */
+static
 void _nmod_geometric_progression_evaluate_init(nmod_geometric_progression_t G,
                                                ulong r, slong len, nmod_t mod,
                                                ulong q, ulong inv_r, ulong inv_q)
@@ -75,6 +76,7 @@ void _nmod_geometric_progression_evaluate_init(nmod_geometric_progression_t G,
     }
 }
 
+static
 void _nmod_geometric_progression_interpolate_init_nonfullword(nmod_geometric_progression_t G,
                                                               slong len, nmod_t mod,
                                                               ulong q, ulong q_pr_quo, ulong q_pr_rem,
@@ -85,25 +87,17 @@ void _nmod_geometric_progression_interpolate_init_nonfullword(nmod_geometric_pro
     /* write u_i for prod_{1 <= k <= i} (q**k - 1),                   */
     /*   and q_i for q**(i*(i-1)/2)                                   */
 
-    /* coeff(G->int_f1, i) = (-1)**i * q_i / u_i */
-    /* coeff(G->int_f2, i) = q_i / u_i, i.e. G->int_f2 == G->int_f1(-x) */
-    nmod_poly_init2_preinv(G->int_f1, mod.n, mod.ninv, len);
-    nmod_poly_init2_preinv(G->int_f2, mod.n, mod.ninv, len);
-    G->int_f1->length = len;
-    G->int_f2->length = len;
+    /* coeff(G->int_f, i) = (-1)**i * q_i / u_i */
+    nmod_poly_init2_preinv(G->int_f, mod.n, mod.ninv, len);
+    G->int_f->length = len;
 
-    /* G->int_s2[i] = (-1)**i * u_i / q_i = inverse of coeff(G->int_f1, i) */
-    /* G->int_s3[i] = (-1)**i / u_i */
     /* G->int_s1[i] = 1 / u_i */
+    /* G->int_s2[i] = u_i / q_i */
     G->int_s1 = _nmod_vec_init(len);
     G->int_s2 = _nmod_vec_init(len);
-    G->int_s3 = _nmod_vec_init(len);
 
-    G->int_f1->coeffs[0] = 1;
-    G->int_f2->coeffs[0] = 1;
-    G->int_s1[0] = 1;
+    G->int_f->coeffs[0] = 1;
     G->int_s2[0] = 1;
-    G->int_s3[0] = 1;
 
     const ulong one_precomp = n_mulmod_precomp_shoup(UWORD(1), mod.n);
     ulong q_pow_i = 1;
@@ -118,38 +112,27 @@ void _nmod_geometric_progression_interpolate_init_nonfullword(nmod_geometric_pro
     {
         ulong inv_q_pow_i_pr_rem = n_mulmod_precomp_shoup_rem_from_quo(inv_q_pow_i_pr, mod.n);
         n_mulmod_and_precomp_shoup(&inv_q_i, &inv_q_i_pr, inv_q_pow_i, inv_q_i, inv_q_pow_i_pr, inv_q_pow_i_pr_rem, inv_q_i_pr, mod.n);  /* 1 / q_i */
-        /* inv_q_pow_i = n_mulmod_shoup(inv_q, inv_q_pow_i, inv_q_pr_quo, mod.n); */  
         n_mulmod_and_precomp_shoup(&inv_q_pow_i, &inv_q_pow_i_pr, inv_q, inv_q_pow_i, inv_q_pr_quo, inv_q_pr_rem, inv_q_pow_i_pr, mod.n);  /* 1 / q**i */
-        G->int_f2->coeffs[i] = n_mulmod_shoup(q_pow_i, G->int_f2->coeffs[i-1], q_pow_i_pr, mod.n);  /* q_i */
-        n_mulmod_and_precomp_shoup(&q_pow_i, &q_pow_i_pr, q, q_pow_i, q_pr_quo, q_pr_rem, q_pow_i_pr, mod.n);  /* q**i */ 
-        G->int_s3[i] = q_pow_i - 1;                         /* temporarily, G->int_s3[i] = q**i - 1 */
+        G->int_f->coeffs[i] = n_mulmod_shoup(q_pow_i, G->int_f->coeffs[i-1], q_pow_i_pr, mod.n);  /* q_i */
+        n_mulmod_and_precomp_shoup(&q_pow_i, &q_pow_i_pr, q, q_pow_i, q_pr_quo, q_pr_rem, q_pow_i_pr, mod.n);  /* q**i */
+        G->int_s1[i-1] = q_pow_i - 1;                       /* temporarily, q**i - 1 */
         prod_diff = nmod_mul(q_pow_i - 1, prod_diff, mod);  /* u_i */
-        if (i % 2)  /* i is odd */
-            G->int_s2[i] = n_mulmod_shoup(inv_q_i, mod.n - prod_diff, inv_q_i_pr, mod.n);  /* (-1)**i * u_i / q_i */
-        else  /* i is even */
-            G->int_s2[i] = n_mulmod_shoup(inv_q_i, prod_diff, inv_q_i_pr, mod.n);          /* (-1)**i * u_i / q_i */
+        G->int_s2[i] = n_mulmod_shoup(inv_q_i, prod_diff, inv_q_i_pr, mod.n);  /* u_i / q_i */
     }
 
     G->int_s1[len-1] = nmod_inv(prod_diff, mod);  /* 1 / u_{len-1} */
     for (slong i = len - 1; i > 0; i--)
     {
-        ulong w_i = G->int_s1[i];                           /* 1 / u_i */
-        ulong tmp = nmod_mul(G->int_f2->coeffs[i], w_i, mod);
-        G->int_f2->coeffs[i] = tmp;                         /* q_i / u_i */
-        G->int_s1[i-1] = nmod_mul(G->int_s3[i], w_i, mod);  /* 1 / u_{i-1} */
-        if (i % 2)  /* i is odd */
-        {
-            G->int_s3[i] = mod.n - w_i;                  /* (-1)**i * G->int_s1[i] */
-            G->int_f1->coeffs[i] = mod.n - tmp;          /* (-1)**i * G->int_f2[i] */
-        }
-        else  /* i is even */
-        {
-            G->int_s3[i] = w_i;                          /* (-1)**i * G->int_s1[i] */
-            G->int_f1->coeffs[i] = tmp;                  /* (-1)**i * G->int_f2[i] */
-        }
+        ulong w_i = G->int_s1[i];   /* 1 / u_i */
+        if (i % 2)                  /* i odd, -q_i / u_i */
+            G->int_f->coeffs[i] = mod.n - nmod_mul(G->int_f->coeffs[i], w_i, mod);
+        else                        /* i even,  q_i / u_i */
+            G->int_f->coeffs[i] = nmod_mul(G->int_f->coeffs[i], w_i, mod);
+        G->int_s1[i-1] = nmod_mul(G->int_s1[i-1], w_i, mod);  /* 1 / u_{i-1} */
     }
 }
 
+static
 void _nmod_geometric_progression_interpolate_init(nmod_geometric_progression_t G,
                                                   slong len, nmod_t mod,
                                                   ulong q, ulong inv_q)
@@ -159,25 +142,17 @@ void _nmod_geometric_progression_interpolate_init(nmod_geometric_progression_t G
     /* write u_i for prod_{1 <= k <= i} (q**k - 1),                   */
     /*   and q_i for q**(i*(i-1)/2)                                   */
 
-    /* coeff(G->int_f1, i) = (-1)**i * q_i / u_i */
-    /* coeff(G->int_f2, i) = q_i / u_i, i.e. G->int_f2 == G->int_f1(-x) */
-    nmod_poly_init2_preinv(G->int_f1, mod.n, mod.ninv, len);
-    nmod_poly_init2_preinv(G->int_f2, mod.n, mod.ninv, len);
-    G->int_f1->length = len;
-    G->int_f2->length = len;
+    /* coeff(G->int_f, i) = (-1)**i * q_i / u_i */
+    nmod_poly_init2_preinv(G->int_f, mod.n, mod.ninv, len);
+    G->int_f->length = len;
 
-    /* G->int_s2[i] = (-1)**i * u_i / q_i = inverse of coeff(G->int_f1, i) */
-    /* G->int_s3[i] = (-1)**i / u_i */
     /* G->int_s1[i] = 1 / u_i */
+    /* G->int_s2[i] = u_i / q_i */
     G->int_s1 = _nmod_vec_init(len);
     G->int_s2 = _nmod_vec_init(len);
-    G->int_s3 = _nmod_vec_init(len);
 
-    G->int_f1->coeffs[0] = 1;
-    G->int_f2->coeffs[0] = 1;
-    G->int_s1[0] = 1;
+    G->int_f->coeffs[0] = 1;
     G->int_s2[0] = 1;
-    G->int_s3[0] = 1;
 
     ulong q_pow_i = 1;
     ulong inv_q_pow_i = 1;
@@ -188,33 +163,22 @@ void _nmod_geometric_progression_interpolate_init(nmod_geometric_progression_t G
     {
         inv_q_i = nmod_mul(inv_q_i, inv_q_pow_i, mod);      /* 1 / q_i */
         inv_q_pow_i = nmod_mul(inv_q_pow_i, inv_q, mod);    /* 1 / q**i */
-        G->int_f2->coeffs[i] = nmod_mul(G->int_f2->coeffs[i-1], q_pow_i, mod);  /* q_i */
+        G->int_f->coeffs[i] = nmod_mul(G->int_f->coeffs[i-1], q_pow_i, mod);  /* q_i */
         q_pow_i = nmod_mul(q_pow_i, q, mod);                /* q**i */
-        G->int_s3[i] = q_pow_i - 1;                         /* temporarily, G->int_s3[i] = q**i - 1 */
+        G->int_s1[i-1] = q_pow_i - 1;                       /* temporarily, q**i - 1 */
         prod_diff = nmod_mul(q_pow_i - 1, prod_diff, mod);  /* u_i */
-        if (i % 2)  /* i is odd */
-            G->int_s2[i] = nmod_mul(mod.n - prod_diff, inv_q_i, mod);  /* (-1)**i * u_i / q_i */
-        else  /* i is even */
-            G->int_s2[i] = nmod_mul(prod_diff, inv_q_i, mod);          /* (-1)**i * u_i / q_i */
+        G->int_s2[i] = nmod_mul(prod_diff, inv_q_i, mod);   /* u_i / q_i */
     }
 
     G->int_s1[len-1] = nmod_inv(prod_diff, mod);  /* 1 / u_{len-1} */
     for (slong i = len - 1; i > 0; i--)
     {
-        ulong w_i = G->int_s1[i];                           /* 1 / u_i */
-        ulong tmp = nmod_mul(G->int_f2->coeffs[i], w_i, mod);
-        G->int_f2->coeffs[i] = tmp;                         /* q_i / u_i */
-        G->int_s1[i-1] = nmod_mul(G->int_s3[i], w_i, mod);  /* 1 / u_{i-1} */
-        if (i % 2)  /* i is odd */
-        {
-            G->int_s3[i] = mod.n - w_i;                  /* (-1)**i * G->int_s1[i] */
-            G->int_f1->coeffs[i] = mod.n - tmp;          /* (-1)**i * G->int_f2[i] */
-        }
-        else  /* i is even */
-        {
-            G->int_s3[i] = w_i;                          /* (-1)**i * G->int_s1[i] */
-            G->int_f1->coeffs[i] = tmp;                  /* (-1)**i * G->int_f2[i] */
-        }
+        ulong w_i = G->int_s1[i];   /* 1 / u_i */
+        if (i % 2)                  /* i odd,  - q_i / u_i */
+            G->int_f->coeffs[i] = mod.n - nmod_mul(G->int_f->coeffs[i], w_i, mod);
+        else                        /* i even, q_i / u_i */
+            G->int_f->coeffs[i] = nmod_mul(G->int_f->coeffs[i], w_i, mod);
+        G->int_s1[i-1] = nmod_mul(G->int_s1[i-1], w_i, mod);  /* 1 / u_{i-1} */
     }
 }
 
@@ -266,6 +230,7 @@ void _nmod_geometric_progression_init_function(nmod_geometric_progression_t G,
 }
 
 /* clear for selection of functionalities (see init)  */
+static
 void _nmod_geometric_progression_clear_function(nmod_geometric_progression_t G, ulong function)
 {
     if (function & UWORD(1))  /* evaluate */
@@ -277,11 +242,10 @@ void _nmod_geometric_progression_clear_function(nmod_geometric_progression_t G, 
     {
         _nmod_vec_clear(G->int_s1);
         _nmod_vec_clear(G->int_s2);
-        _nmod_vec_clear(G->int_s3);
-        nmod_poly_clear(G->int_f1);
-        nmod_poly_clear(G->int_f2);
+        nmod_poly_clear(G->int_f);
     }
     /* if ((function>>2) & UWORD(1)) */
+    /* extrapolate */
 }
 
 /* initialize for all: evaluate+interpolate+extrapolate */

@@ -24,7 +24,7 @@
 /* finds an element of order at least n                       */
 /* returns 0 if not found                                     */
 /*------------------------------------------------------------*/
-static long nmod_find_root(slong n, nmod_t mod)
+static ulong nmod_find_root(slong n, nmod_t mod)
 {
     ulong attempts = 0;
     for (ulong q = 2; q < mod.n; q++)
@@ -156,7 +156,7 @@ void sample_geometric_precomp_eval(void * arg, ulong count)
         for (ulong ii = 0; ii < __NB_ITER; ii++)
         {
             _nmod_geometric_progression_init_function(G, r, npoints_precomp, mod, UWORD(1));
-            _nmod_geometric_progression_clear_function(G, UWORD(1));
+            nmod_geometric_progression_clear(G);
         }
         prof_stop();
     }
@@ -193,7 +193,7 @@ void sample_geometric_precomp_interp(void * arg, ulong count)
         for (ulong ii = 0; ii < __NB_ITER; ii++)
         {
             _nmod_geometric_progression_init_function(G, r, npoints_precomp, mod, UWORD(2));
-            _nmod_geometric_progression_clear_function(G, UWORD(2));
+            nmod_geometric_progression_clear(G);
         }
         prof_stop();
     }
