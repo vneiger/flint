@@ -24,7 +24,7 @@
 /* finds an element of order at least n                       */
 /* returns 0 if not found                                     */
 /*------------------------------------------------------------*/
-static long nmod_find_root(slong n, nmod_t mod)
+static ulong nmod_find_root(slong n, nmod_t mod)
 {
     ulong attempts = 0;
     for (ulong q = 2; q < mod.n; q++)
