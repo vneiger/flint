@@ -24,10 +24,44 @@ _gr_poly_sin_cos_series_basecase(gr_ptr s, gr_ptr c, gr_srcptr h, slong hlen,
 
     hlen = FLINT_MIN(hlen, n);
 
+    if (s == NULL || c == NULL)
+    {
+        if (hlen == 1)
+        {
+            if (s == NULL)
+            {
+                if (times_pi == 0)
+                    status |= gr_cos_pi(c, h, ctx);
+                else
+                    status |= gr_cos(c, h, ctx);
+                status |= _gr_vec_zero(GR_ENTRY(c, 1, sz), n - 1, ctx);
+            }
+            else
+            {
+                if (times_pi == 0)
+                    status |= gr_sin_pi(s, h, ctx);
+                else
+                    status |= gr_sin(s, h, ctx);
+                status |= _gr_vec_zero(GR_ENTRY(s, 1, sz), n - 1, ctx);
+            }
+        }
+        else
+        {
+            GR_TMP_INIT_VEC(t, n, ctx);
+            if (s == NULL)
+                status |= _gr_poly_sin_cos_series_basecase(t, c, h, hlen, n, times_pi, ctx);
+            else
+                status |= _gr_poly_sin_cos_series_basecase(s, t, h, hlen, n, times_pi, ctx);
+            GR_TMP_CLEAR_VEC(t, n, ctx);
+        }
+
+         return status;
+    }
+
     if (times_pi)
         status |= gr_sin_cos_pi(s, c, h, ctx);
     else
-        status |= gr_sin_cos(s, c, h, ctx);
+       status |= gr_sin_cos(s, c, h, ctx);
 
     if (hlen == 1)
     {
