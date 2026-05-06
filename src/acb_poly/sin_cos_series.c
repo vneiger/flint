@@ -63,7 +63,7 @@ __acb_poly_sin_cos_series(acb_ptr s, acb_ptr c, acb_srcptr h, slong hlen, slong 
             cutoff = FLINT_MIN(cutoff, 700);
         }
 
-        gr_ctx_init_complex_acb(ctx, 53);
+        gr_ctx_init_complex_acb(ctx, prec);
 
         if (hlen < cutoff)
             status = _gr_poly_sin_cos_series_basecase(s, c, h, hlen, n, times_pi, ctx);
