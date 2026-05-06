@@ -10,6 +10,7 @@
 */
 
 #include "arb_poly.h"
+#include "gr_poly.h"
 
 void
 _arb_poly_sin_pi_series(arb_ptr g, arb_srcptr h, slong hlen, slong n, slong prec)
@@ -33,9 +34,12 @@ _arb_poly_sin_pi_series(arb_ptr g, arb_srcptr h, slong hlen, slong n, slong prec
     }
     else
     {
-        arb_ptr t = _arb_vec_init(n);
-        _arb_poly_sin_cos_pi_series(g, t, h, hlen, n, prec);
-        _arb_vec_clear(t, n);
+        gr_ctx_t ctx;
+        int status;
+        gr_ctx_init_real_arb(ctx, prec);
+        status = _gr_poly_sin_pi_series(g, h, hlen, n, ctx);
+        if (status != GR_SUCCESS)
+            _arb_vec_indeterminate(g, n);
     }
 }
 

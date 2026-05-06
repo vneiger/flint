@@ -9,7 +9,6 @@
     (at your option) any later version.  See <https://www.gnu.org/licenses/>.
 */
 
-#include <math.h>
 #include "arb_poly.h"
 #include "gr_poly.h"
 
@@ -51,26 +50,14 @@ __arb_poly_sin_cos_series(arb_ptr s, arb_ptr c, arb_srcptr h, slong hlen, slong 
     }
     else
     {
-        slong cutoff;
         gr_ctx_t ctx;
         int status;
-
-        if (prec <= 128)
-        {
-            cutoff = 1400;
-        }
-        else
-        {
-            cutoff = 100000 / pow(log(prec), 3);
-            cutoff = FLINT_MIN(cutoff, 700);
-        }
-
         gr_ctx_init_real_arb(ctx, prec);
 
-        if (hlen < cutoff)
-            status = _gr_poly_sin_cos_series_basecase(s, c, h, hlen, n, times_pi, ctx);
+        if (times_pi)
+            status = _gr_poly_sin_cos_pi_series(s, c, h, hlen, n, ctx);
         else
-            status = _gr_poly_sin_cos_series_tangent(s, c, h, hlen, n, times_pi, ctx);
+            status = _gr_poly_sin_cos_series(s, c, h, hlen, n, ctx);
 
         if (status != GR_SUCCESS)
         {
