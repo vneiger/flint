@@ -20,7 +20,7 @@ _gr_poly_sin_cos_series_basecase(gr_ptr s, gr_ptr c, gr_srcptr h, slong hlen,
     slong sz = ctx->sizeof_elem;
     int status = GR_SUCCESS;
     slong k, alen = FLINT_MIN(n, hlen);
-    gr_ptr a, t, u;
+    gr_ptr a, t, u, recip;
 
     hlen = FLINT_MIN(hlen, n);
 
@@ -49,6 +49,13 @@ _gr_poly_sin_cos_series_basecase(gr_ptr s, gr_ptr c, gr_srcptr h, slong hlen,
         status |= _gr_vec_mul_scalar(GR_ENTRY(a, 1, sz), GR_ENTRY(a, 1, sz), alen - 1, t, ctx);
     }
 
+    recip = NULL;
+    if (gr_ctx_is_finite_characteristic(ctx) == T_TRUE)
+    {
+        GR_TMP_INIT_VEC(recip, n - 1, ctx);
+        status |= _gr_vec_reciprocals(recip, n - 1, ctx);
+    }
+
     for (k = 1; k < n; k++)
     {
         slong l = FLINT_MIN(k, hlen - 1);
@@ -56,9 +63,20 @@ _gr_poly_sin_cos_series_basecase(gr_ptr s, gr_ptr c, gr_srcptr h, slong hlen,
         status |= _gr_vec_dot_rev(t, NULL, 1, GR_ENTRY(a, 1, sz), GR_ENTRY(s, k - l, sz), l, ctx);
         status |= _gr_vec_dot_rev(u, NULL, 0, GR_ENTRY(a, 1, sz), GR_ENTRY(c, k - l, sz), l, ctx);
 
-        status |= gr_div_ui(GR_ENTRY(c, k, sz), t, k, ctx);
-        status |= gr_div_ui(GR_ENTRY(s, k, sz), u, k, ctx);
+        if (recip != NULL)
+        {
+            status |= gr_mul(GR_ENTRY(c, k, sz), t, GR_ENTRY(recip, k - 1, sz), ctx);
+            status |= gr_mul(GR_ENTRY(s, k, sz), u, GR_ENTRY(recip, k - 1, sz), ctx);
+        }
+        else
+        {
+            status |= gr_div_ui(GR_ENTRY(c, k, sz), t, k, ctx);
+            status |= gr_div_ui(GR_ENTRY(s, k, sz), u, k, ctx);
+        }
     }
+
+    if (recip != NULL)
+        GR_TMP_CLEAR_VEC(recip, n - 1, ctx);
 
     GR_TMP_CLEAR_VEC(a, alen + 2, ctx);
 
