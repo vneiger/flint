@@ -296,9 +296,20 @@ gr_series_mod_ ## func(gr_poly_t res, const gr_poly_t x, gr_ctx_t ctx) \
     return gr_poly_ ## func ## _series(res, x, GR_SERIES_MOD_N(ctx), GR_SERIES_MOD_ELEM_CTX(ctx)); \
 } \
 
+#define BINARY_UNARY_POLY_WRAPPER(func) \
+int \
+gr_series_mod_ ## func(gr_poly_t res1, gr_poly_t res2, const gr_poly_t x, gr_ctx_t ctx) \
+{ \
+    return gr_poly_ ## func ## _series(res1, res2, x, GR_SERIES_MOD_N(ctx), GR_SERIES_MOD_ELEM_CTX(ctx)); \
+} \
+
 UNARY_POLY_WRAPPER(exp)
 UNARY_POLY_WRAPPER(log)
 UNARY_POLY_WRAPPER(rsqrt)
+UNARY_POLY_WRAPPER(sin)
+UNARY_POLY_WRAPPER(cos)
+UNARY_POLY_WRAPPER(sin_pi)
+UNARY_POLY_WRAPPER(cos_pi)
 UNARY_POLY_WRAPPER(tan)
 UNARY_POLY_WRAPPER(asin)
 UNARY_POLY_WRAPPER(acos)
@@ -306,6 +317,9 @@ UNARY_POLY_WRAPPER(atan)
 UNARY_POLY_WRAPPER(asinh)
 UNARY_POLY_WRAPPER(acosh)
 UNARY_POLY_WRAPPER(atanh)
+
+BINARY_UNARY_POLY_WRAPPER(sin_cos)
+BINARY_UNARY_POLY_WRAPPER(sin_cos_pi)
 
 
 /* fixme: gr_poly_sqrt_series does not deal with leading zeros */
@@ -459,6 +473,12 @@ gr_method_tab_input _gr_series_mod_methods_input[] =
     {GR_METHOD_RSQRT,       (gr_funcptr) gr_series_mod_rsqrt},
     {GR_METHOD_EXP,         (gr_funcptr) gr_series_mod_exp},
     {GR_METHOD_LOG,         (gr_funcptr) gr_series_mod_log},
+    {GR_METHOD_SIN,         (gr_funcptr) gr_series_mod_sin},
+    {GR_METHOD_COS,         (gr_funcptr) gr_series_mod_cos},
+    {GR_METHOD_SIN_PI,      (gr_funcptr) gr_series_mod_sin_pi},
+    {GR_METHOD_COS_PI,      (gr_funcptr) gr_series_mod_cos_pi},
+    {GR_METHOD_SIN_COS,     (gr_funcptr) gr_series_mod_sin_cos},
+    {GR_METHOD_SIN_COS_PI,  (gr_funcptr) gr_series_mod_sin_cos_pi},
     {GR_METHOD_TAN,         (gr_funcptr) gr_series_mod_tan},
     {GR_METHOD_ASIN,        (gr_funcptr) gr_series_mod_asin},
     {GR_METHOD_ACOS,        (gr_funcptr) gr_series_mod_acos},
