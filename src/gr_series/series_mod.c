@@ -100,6 +100,16 @@ gr_series_mod_ctx_is_field(gr_ctx_t ctx)
     return gr_ctx_is_field(GR_SERIES_MOD_ELEM_CTX(ctx));
 }
 
+truth_t
+gr_series_mod_ctx_is_finite_characteristic(gr_ctx_t ctx)
+{
+    /* Zero ring */
+    if (GR_SERIES_MOD_N(ctx) == 0)
+        return T_TRUE;
+
+    return gr_ctx_is_finite_characteristic(GR_SERIES_MOD_ELEM_CTX(ctx));
+}
+
 int gr_series_mod_ctx_set_gen_name(gr_ctx_t ctx, const char * s)
 {
     slong len;
@@ -416,6 +426,7 @@ gr_method_tab_input _gr_series_mod_methods_input[] =
     {GR_METHOD_CTX_IS_RATIONAL_VECTOR_SPACE, (gr_funcptr) gr_series_mod_ctx_is_rational_vector_space},
     {GR_METHOD_CTX_IS_REAL_VECTOR_SPACE, (gr_funcptr) gr_series_mod_ctx_is_real_vector_space},
     {GR_METHOD_CTX_IS_COMPLEX_VECTOR_SPACE, (gr_funcptr) gr_series_mod_ctx_is_complex_vector_space},
+    {GR_METHOD_CTX_IS_FINITE_CHARACTERISTIC, (gr_funcptr) gr_series_mod_ctx_is_finite_characteristic},
     {GR_METHOD_CTX_BASE,    (gr_funcptr) _gr_series_mod_ctx_base},
     {GR_METHOD_INIT,        (gr_funcptr) gr_series_mod_init},
     {GR_METHOD_CLEAR,       (gr_funcptr) gr_series_mod_clear},

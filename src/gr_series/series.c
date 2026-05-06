@@ -1918,6 +1918,12 @@ gr_series_ctx_is_complex_vector_space(gr_ctx_t ctx)
     return gr_ctx_is_complex_vector_space(GR_SERIES_ELEM_CTX(ctx));
 }
 
+truth_t
+gr_series_ctx_is_finite_characteristic(gr_ctx_t ctx)
+{
+    return gr_ctx_is_finite_characteristic(GR_SERIES_ELEM_CTX(ctx));
+}
+
 int gr_series_ctx_set_gen_name(gr_ctx_t ctx, const char * s)
 {
     slong len;
@@ -2059,6 +2065,7 @@ gr_method_tab_input _gr_series_methods_input[] =
     {GR_METHOD_CTX_IS_RATIONAL_VECTOR_SPACE, (gr_funcptr) gr_series_ctx_is_rational_vector_space},
     {GR_METHOD_CTX_IS_REAL_VECTOR_SPACE, (gr_funcptr) gr_series_ctx_is_real_vector_space},
     {GR_METHOD_CTX_IS_COMPLEX_VECTOR_SPACE, (gr_funcptr) gr_series_ctx_is_complex_vector_space},
+    {GR_METHOD_CTX_IS_FINITE_CHARACTERISTIC, (gr_funcptr) gr_series_ctx_is_finite_characteristic},
     {GR_METHOD_CTX_BASE,    (gr_funcptr) _gr_series_ctx_base},
     {GR_METHOD_INIT,        (gr_funcptr) gr_series_init},
     {GR_METHOD_CLEAR,       (gr_funcptr) gr_series_clear},

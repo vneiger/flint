@@ -81,6 +81,7 @@ truth_t gr_series_ctx_is_integral_domain(gr_ctx_t ctx);
 truth_t gr_series_ctx_is_rational_vector_space(gr_ctx_t ctx);
 truth_t gr_series_ctx_is_real_vector_space(gr_ctx_t ctx);
 truth_t gr_series_ctx_is_complex_vector_space(gr_ctx_t ctx);
+truth_t gr_series_ctx_is_finite_characteristic(gr_ctx_t ctx);
 WARN_UNUSED_RESULT int gr_series_ctx_set_gen_name(gr_ctx_t ctx, const char * s);
 WARN_UNUSED_RESULT int gr_series_ctx_set_gen_names(gr_ctx_t ctx, const char ** s);
 
@@ -183,6 +184,7 @@ truth_t gr_series_mod_ctx_is_rational_vector_space(gr_ctx_t ctx);
 truth_t gr_series_mod_ctx_is_real_vector_space(gr_ctx_t ctx);
 truth_t gr_series_mod_ctx_is_complex_vector_space(gr_ctx_t ctx);
 truth_t gr_series_mod_ctx_is_field(gr_ctx_t ctx);
+truth_t gr_series_mod_ctx_is_finite_characteristic(gr_ctx_t ctx);
 WARN_UNUSED_RESULT int gr_series_mod_ctx_set_gen_name(gr_ctx_t ctx, const char * s);
 WARN_UNUSED_RESULT int gr_series_mod_ctx_set_gen_names(gr_ctx_t ctx, const char ** s);
 WARN_UNUSED_RESULT int gr_series_mod_gens_recursive(gr_vec_t vec, gr_ctx_t ctx);
