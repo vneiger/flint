@@ -40,7 +40,7 @@ TEST_FUNCTION_START(gr_poly_sin_cos_series, state)
         else if (gr_ctx_is_finite(ctx) == T_TRUE)
             n = 1 + n_randint(state, 100);
         else
-            n = 1 + n_randint(state, 20);
+            n = 1 + n_randint(state, 30);
 
         GR_MUST_SUCCEED(gr_poly_randtest(a, state, n + 2, ctx));
         GR_MUST_SUCCEED(gr_poly_randtest(S, state, n + 2, ctx));
