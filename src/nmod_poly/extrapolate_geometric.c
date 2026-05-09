@@ -98,7 +98,6 @@ void nmod_poly_extrapolate_geometric(nn_ptr oval, slong olen,
                                      nn_srcptr ival, slong ilen,
                                      slong offset, ulong r, nmod_t mod)
 {
-    /* TODO handle overlap */
     if (ilen == 0)
     {
         for (slong i = 0; i < olen; i++)
