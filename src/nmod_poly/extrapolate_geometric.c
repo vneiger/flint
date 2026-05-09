@@ -23,6 +23,9 @@ void nmod_poly_extrapolate_geometric_precomp(nn_ptr oval, slong olen,
     FLINT_ASSERT((offset >= ilen && G->len >= offset+olen)
                  || (offset <= -olen && G->len >= ilen-offset));
 
+    if (olen == 0)
+        return;
+
     if (ilen == 0)
     {
         for (slong i = 0; i < olen; i++)
@@ -98,6 +101,9 @@ void nmod_poly_extrapolate_geometric(nn_ptr oval, slong olen,
                                      nn_srcptr ival, slong ilen,
                                      slong offset, ulong r, nmod_t mod)
 {
+    if (olen == 0)
+        return;
+
     if (ilen == 0)
     {
         for (slong i = 0; i < olen; i++)

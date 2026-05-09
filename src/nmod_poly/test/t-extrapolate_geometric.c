@@ -55,18 +55,25 @@ TEST_FUNCTION_START(nmod_poly_extrapolate_geometric, state)
 
             _nmod_vec_randtest(ival, state, ilen, mod);
 
-            /* input points are c * q**k, k = istart...istart+ilen-1 */
             ulong c = 1 + n_randint(state, modn-1);
-            ipts[0] = nmod_pow_ui(q, istart, mod);
-            ipts[0] = nmod_mul(ipts[0], c, mod);
-            for (slong k = 1; k < ilen; k++)
-                ipts[k] = nmod_mul(ipts[k-1], q, mod);
+
+            /* input points are c * q**k, k = istart...istart+ilen-1 */
+            if (ilen > 0)
+            {
+                ipts[0] = nmod_pow_ui(q, istart, mod);
+                ipts[0] = nmod_mul(ipts[0], c, mod);
+                for (slong k = 1; k < ilen; k++)
+                    ipts[k] = nmod_mul(ipts[k-1], q, mod);
+            }
 
             /* output points are c * q**k, k = istart+offset...istart+offset+olen-1 */
-            opts[0] = nmod_pow_ui(q, istart+offset, mod);
-            opts[0] = nmod_mul(opts[0], c, mod);
-            for (slong k = 1; k < olen; k++)
-                opts[k] = nmod_mul(opts[k-1], q, mod);
+            if (olen > 0)
+            {
+                opts[0] = nmod_pow_ui(q, istart+offset, mod);
+                opts[0] = nmod_mul(opts[0], c, mod);
+                for (slong k = 1; k < olen; k++)
+                    opts[k] = nmod_mul(opts[k-1], q, mod);
+            }
 
             nmod_poly_interpolate_nmod_vec(P, ipts, ival, ilen);
             nmod_poly_evaluate_nmod_vec(val, P, opts, olen);
@@ -109,18 +116,25 @@ TEST_FUNCTION_START(nmod_poly_extrapolate_geometric, state)
 
             _nmod_vec_randtest(ival, state, ilen, mod);
 
-            /* input points are c * q**k, k = istart...istart+ilen-1 */
             ulong c = 1 + n_randint(state, modn-1);
-            ipts[0] = nmod_pow_ui(q, istart, mod);
-            ipts[0] = nmod_mul(ipts[0], c, mod);
-            for (slong k = 1; k < ilen; k++)
-                ipts[k] = nmod_mul(ipts[k-1], q, mod);
+
+            /* input points are c * q**k, k = istart...istart+ilen-1 */
+            if (ilen > 0)
+            {
+                ipts[0] = nmod_pow_ui(q, istart, mod);
+                ipts[0] = nmod_mul(ipts[0], c, mod);
+                for (slong k = 1; k < ilen; k++)
+                    ipts[k] = nmod_mul(ipts[k-1], q, mod);
+            }
 
             /* output points are c * q**k, k = istart+offset...istart+offset+olen-1 */
-            opts[0] = nmod_pow_ui(q, istart+offset, mod);
-            opts[0] = nmod_mul(opts[0], c, mod);
-            for (slong k = 1; k < olen; k++)
-                opts[k] = nmod_mul(opts[k-1], q, mod);
+            if (olen > 0)
+            {
+                opts[0] = nmod_pow_ui(q, istart+offset, mod);
+                opts[0] = nmod_mul(opts[0], c, mod);
+                for (slong k = 1; k < olen; k++)
+                    opts[k] = nmod_mul(opts[k-1], q, mod);
+            }
 
             nmod_poly_interpolate_nmod_vec(P, ipts, ival, ilen);
             nmod_poly_evaluate_nmod_vec(val, P, opts, olen);
