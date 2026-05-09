@@ -40,55 +40,48 @@ void nmod_poly_extrapolate_geometric_precomp(nn_ptr oval, slong olen,
     /* forward extrapolation */
     if (offset > 0)
     {
-        /* TODO TMP ALLOC? */
-        nn_ptr tmp = FLINT_ARRAY_ALLOC(ilen, ulong);
+        TMP_INIT;
+        TMP_START;
+        nn_ptr tmp = TMP_ALLOC(ilen * sizeof(ulong));
+
         /* first scaling */
-        //    svals = [ext_s2[i] * ext_s3[m-1-i] * vals[i] for i in range(m)]
         for (slong i = 0; i < ilen; i++)
         {
-            /* TODO use some NMOD_RED3?? */
             tmp[i] = nmod_mul(G->ext_s3[ilen-1-i], ival[i], G->mod);
             tmp[i] = nmod_mul(G->ext_s2[i], tmp[i], G->mod);
         }
 
         /* middle product */
-        //    g = xring(svals)
-        //    f = ext_ff.shift(-(lmk - m)).truncate(m+n-1)
-        //    mp = (f * g).shift(-(m-1)).truncate(n)
         _nmod_poly_mulmid(oval, G->ext_ff->coeffs + offset-ilen, ilen+olen-1, tmp, ilen, ilen-1, ilen+olen-1, G->mod);
 
         /* second scaling */
-        //    w = [ext_s1f[lmk+j] * ext_s2[lmk-m+j] * mp[j] for j in range(n)]
         for (slong j = 0; j < olen; j++)
         {
             oval[j] = nmod_mul(G->ext_s2[offset-ilen+j], oval[j], G->mod);
             oval[j] = nmod_mul(G->ext_s1f[offset+j], oval[j], G->mod);
         }
-        flint_free(tmp);
+        
+        TMP_END;
     }
 
     /* backward extrapolation */
     else
     {
-        /* TODO TMP ALLOC? */
-        nn_ptr tmp = FLINT_ARRAY_ALLOC(FLINT_MAX(ilen, olen), ulong);
+        TMP_INIT;
+        TMP_START;
+        nn_ptr tmp = TMP_ALLOC(FLINT_MAX(ilen, olen) * sizeof(ulong));
+
         /* first scaling */
-        //    svals = [ext_s2[m-1-i] * ext_s3[i] * vals[m-1-i] for i in range(m)]
         for (slong i = 0; i < ilen; i++)
         {
-            /* TODO use some NMOD_RED3?? */
             tmp[i] = nmod_mul(G->ext_s2[ilen-1-i], ival[ilen-1-i], G->mod);
             tmp[i] = nmod_mul(G->ext_s3[i], tmp[i], G->mod);
         }
 
         /* middle product */
-        //    g = xring(svals)
-        //    f = ext_fb.shift(lmk + n).truncate(m+n-1)
-        //    mp = (f * g).shift(-(m-1)).truncate(n)
         _nmod_poly_mulmid(oval, G->ext_fb->coeffs - (offset+olen), ilen+olen-1, tmp, ilen, ilen-1, ilen+olen-1, G->mod);
 
         /* second scaling */
-        //    w = [ext_s1b[m-1-lmk-j] * ext_s3[-lmk-j-1] * mp[n-1-j] for j in range(n)]
         for (slong j = 0; j < olen; j++)
             tmp[j] = oval[olen - 1 - j];
         for (slong j = 0; j < olen; j++)
@@ -97,7 +90,7 @@ void nmod_poly_extrapolate_geometric_precomp(nn_ptr oval, slong olen,
             oval[j] = nmod_mul(G->ext_s1b[ilen-1-offset-j], oval[j], G->mod);
         }
 
-        flint_free(tmp);
+        TMP_END;
     }
 }
 

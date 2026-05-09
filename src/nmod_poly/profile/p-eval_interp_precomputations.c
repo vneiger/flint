@@ -91,7 +91,7 @@ void sample_general_precomp(void * arg, ulong count)
     FLINT_TEST_CLEAR(state);
 }
 
-/* precomputations for geometric progression (eval+interp) */
+/* precomputations for geometric progression (eval+interp+extrap) */
 void sample_geometric_precomp(void * arg, ulong count)
 {
     ulong n;
@@ -201,6 +201,43 @@ void sample_geometric_precomp_interp(void * arg, ulong count)
     FLINT_TEST_CLEAR(state);
 }
 
+/* precomputations for geometric progression (extrap only) */
+void sample_geometric_precomp_extrap(void * arg, ulong count)
+{
+    ulong n;
+    nmod_t mod;
+    ulong i;
+
+    info_t * info = (info_t *) arg;
+    flint_bitcnt_t bits = info->bits;
+    slong npoints_precomp = info->npoints_precomp;
+
+    FLINT_TEST_INIT(state);
+
+    for (i = 0; i < count; i++)
+    {
+        n = n_randprime(state, bits, 1);
+        nmod_init(&mod, n);
+        ulong r = nmod_find_root(2*npoints_precomp, mod);
+        if (r == 0)
+            flint_printf("\n...could not find element of suitable order for geometric progression...\n");
+
+        nmod_geometric_progression_t G;
+        G->len = npoints_precomp;
+        G->mod = mod;
+
+        prof_start();
+        for (ulong ii = 0; ii < __NB_ITER; ii++)
+        {
+            _nmod_geometric_progression_init_function(G, r, npoints_precomp, mod, UWORD(4));
+            nmod_geometric_progression_clear(G);
+        }
+        prof_stop();
+    }
+
+    FLINT_TEST_CLEAR(state);
+}
+
 int main(int argc, char * argv[])
 {
     if (argc > 1 && (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0))
@@ -233,6 +270,7 @@ int main(int argc, char * argv[])
     double time_geometric_all;
     double time_geometric_eval;
     double time_geometric_interp;
+    double time_geometric_extrap;
 
     info_t info;
     flint_bitcnt_t i;
@@ -246,11 +284,11 @@ int main(int argc, char * argv[])
         printf("==== nbits = %ld====\n", i);
 
         if (func_bench == 0)  /* bench all */
-            flint_printf("len\tpoints | general |   geom  |  g-eval | g-interp \n");
+            flint_printf("len\tpoints | general |   geom  |  g-eval | g-interp| g-extrap \n");
         else if (func_bench == 1)  /* general only */
             flint_printf("len\tpoints | general\n");
         else if (func_bench == 2)  /* geometric only */
-            flint_printf("len\tpoints |   geom  |  g-eval | g-interp \n");
+            flint_printf("len\tpoints |   geom  |  g-eval | g-interp| g-extrap \n");
 
         for (int len = 0; len < nb_lens; ++len)
         {
@@ -267,16 +305,18 @@ int main(int argc, char * argv[])
                 prof_repeat(&time_geometric_all, &tmp, sample_geometric_precomp, (void *) &info);
                 prof_repeat(&time_geometric_eval, &tmp, sample_geometric_precomp_eval, (void *) &info);
                 prof_repeat(&time_geometric_interp, &tmp, sample_geometric_precomp_interp, (void *) &info);
+                prof_repeat(&time_geometric_extrap, &tmp, sample_geometric_precomp_extrap, (void *) &info);
             }
 
             if (func_bench == 0)
             {
-                flint_printf("%ld\t%7ld| %.1e | %.1e | %.1e | %.1e\n",
+                flint_printf("%ld\t%7ld| %.1e | %.1e | %.1e | %.1e | %.1e\n",
                              info.length, info.npoints_precomp,
                              time_general/fac,
                              time_geometric_all/fac,
                              time_geometric_eval/fac,
-                             time_geometric_interp/fac);
+                             time_geometric_interp/fac,
+                             time_geometric_extrap/fac);
             }
             else if (func_bench == 1)
             {
@@ -286,11 +326,12 @@ int main(int argc, char * argv[])
             }
             else if (func_bench == 2)
             {
-                flint_printf("%ld\t%7ld| %.1e | %.1e | %.1e\n",
+                flint_printf("%ld\t%7ld| %.1e | %.1e | %.1e | %.1e\n",
                              info.length, info.npoints_precomp,
                              time_geometric_all/fac,
                              time_geometric_eval/fac,
-                             time_geometric_interp/fac);
+                             time_geometric_interp/fac,
+                             time_geometric_extrap/fac);
             }
         }
 
