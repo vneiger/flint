@@ -182,6 +182,55 @@ void _nmod_geometric_progression_interpolate_init(nmod_geometric_progression_t G
     }
 }
 
+static
+void _nmod_geometric_progression_extrapolate_init(nmod_geometric_progression_t G,
+                                                  slong len, nmod_t mod,
+                                                  ulong q, ulong inv_q)
+{
+    /* ext_ff: sum_{i=0}^{len-1} x**i / (q**(i+1) - 1)    [for forward]  */
+    /* ext_fb: sum_{i=0}^{len-1} x**i / (q**(-i-1) - 1)   [for backward] */
+    nmod_poly_init2_preinv(G->ext_ff, mod.n, mod.ninv, len-1);
+    nmod_poly_init2_preinv(G->ext_fb, mod.n, mod.ninv, len-1);
+    G->ext_ff->length = len-1;
+    G->ext_fb->length = len-1;
+
+    /* ext_s1f[i] = prod_{k=1}^{i} (q**k - 1)    [for forward]  */ /* TODO s0f */
+    /* ext_s1b[i] = prod_{k=1}^{i} (q**(-k) - 1) [for backward] */ /* TODO s0b */
+    /* ext_s2[i] = 1 / ext_s1f[i]                [for both]     */ /* TODO s1p */
+    /* ext_s3[i] = 1 / ext_s1b[i]                [for both]     */ /* TODO s1m */
+    G->ext_s1f = _nmod_vec_init(len);
+    G->ext_s1b = _nmod_vec_init(len);
+    G->ext_s2 = _nmod_vec_init(len);
+    G->ext_s3 = _nmod_vec_init(len);
+
+    G->ext_s1f[0] = 1;
+    G->ext_s1b[0] = 1;
+
+    ulong q_pow_i = q;
+    ulong inv_q_pow_i = inv_q;
+
+    for (slong i = 1; i < len; i++)
+    {
+        G->ext_ff->coeffs[i-1] = q_pow_i - 1;
+        G->ext_fb->coeffs[i-1] = inv_q_pow_i - 1;
+        G->ext_s1f[i] = nmod_mul(G->ext_s1f[i-1], q_pow_i - 1, mod);
+        G->ext_s1b[i] = nmod_mul(G->ext_s1b[i-1], inv_q_pow_i - 1, mod);
+        q_pow_i = nmod_mul(q_pow_i, q, mod);
+        inv_q_pow_i = nmod_mul(inv_q_pow_i, inv_q, mod);
+    }
+
+    G->ext_s2[len-1] = nmod_inv(G->ext_s1f[len-1], mod);
+    G->ext_s3[len-1] = nmod_inv(G->ext_s1b[len-1], mod);
+
+    for (slong i = len-1; i > 0; i--)
+    {
+        G->ext_s2[i-1] = nmod_mul(G->ext_s2[i], G->ext_ff->coeffs[i-1], mod);
+        G->ext_s3[i-1] = nmod_mul(G->ext_s3[i], G->ext_fb->coeffs[i-1], mod);
+        G->ext_ff->coeffs[i-1] = nmod_mul(G->ext_s2[i], G->ext_s1f[i-1], mod);
+        G->ext_fb->coeffs[i-1] = nmod_mul(G->ext_s3[i], G->ext_s1b[i-1], mod);
+    }
+}
+
 /* initialize for selection of functionalities:              */
 /*    the lowest 3 bits of `function` act as a mask for the  */
 /*    three functionalities, in this order:                  */
@@ -211,8 +260,11 @@ void _nmod_geometric_progression_init_function(nmod_geometric_progression_t G,
             _nmod_geometric_progression_evaluate_init_nonfullword(G, r, len, mod, q, q_pr_quo, q_pr_rem, inv_r, inv_q, inv_q_pr_quo, inv_q_pr_rem);
         if ((function>>1) & UWORD(1))  /* interpolate */
             _nmod_geometric_progression_interpolate_init_nonfullword(G, len, mod, q, q_pr_quo, q_pr_rem, inv_q, inv_q_pr_quo, inv_q_pr_rem);
-        /* if ((function>>2) & UWORD(1)) */
-        /* extrapolate */
+        /* TODO improve Shoup interpolate */
+        if ((function>>2) & UWORD(1))  /* extrapolate */
+            _nmod_geometric_progression_extrapolate_init(G, len, mod, q, inv_q);
+        /* TODO Shoup extrapolate */
+        /* TODO Shoup version of combine extrapolate&interpolate */
     }
     else
     {
@@ -224,8 +276,9 @@ void _nmod_geometric_progression_init_function(nmod_geometric_progression_t G,
             _nmod_geometric_progression_evaluate_init(G, r, len, mod, q, inv_r, inv_q);
         if ((function>>1) & UWORD(1))  /* interpolate */
             _nmod_geometric_progression_interpolate_init(G, len, mod, q, inv_q);
-        /* if ((function>>2) & UWORD(1)) */
-        /* extrapolate */
+        if ((function>>2) & UWORD(1))  /* extrapolate */
+            _nmod_geometric_progression_extrapolate_init(G, len, mod, q, inv_q);
+        /* TODO combine extrapolate&interpolate (note: ext_s1f is the same as G->int_s1) */
     }
 }
 
@@ -244,8 +297,15 @@ void _nmod_geometric_progression_clear_function(nmod_geometric_progression_t G, 
         _nmod_vec_clear(G->int_s2);
         nmod_poly_clear(G->int_f);
     }
-    /* if ((function>>2) & UWORD(1)) */
-    /* extrapolate */
+    if ((function>>2) & UWORD(1))  /* extrapolate */
+    {
+        _nmod_vec_clear(G->ext_s1f);
+        _nmod_vec_clear(G->ext_s1b);
+        _nmod_vec_clear(G->ext_s2);
+        _nmod_vec_clear(G->ext_s3);
+        nmod_poly_clear(G->ext_ff);
+        nmod_poly_clear(G->ext_fb);
+    }
 }
 
 /* initialize for all: evaluate+interpolate+extrapolate */

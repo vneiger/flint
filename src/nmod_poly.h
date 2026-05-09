@@ -64,6 +64,11 @@ typedef struct
     nmod_poly_t ev_f;       /* evaluate: polynomial */
     nn_ptr int_s1, int_s2;  /* interpolate: scaling constants */
     nmod_poly_t int_f;      /* interpolate: polynomial */
+    nmod_poly_t ext_ff;     /* extrapolate forward: polynomial  */
+    nmod_poly_t ext_fb;     /* extrapolate backward: polynomial */
+    nn_ptr ext_s1f;         /* extrapolate: forward scaling constant  */
+    nn_ptr ext_s1b;         /* extrapolate: backward scaling constant */
+    nn_ptr ext_s2, ext_s3;  /* extrapolate: shared scaling constants */
     nmod_t mod;             /* modulus */
     slong len;              /* number of points */
     ulong function;         /* choice of precomputations */
@@ -592,7 +597,7 @@ void _nmod_poly_tree_free(nn_ptr * tree, slong len);
 
 void _nmod_poly_tree_build(nn_ptr * tree, nn_srcptr roots, slong len, nmod_t mod);
 
-/* Geometric evaluation / interpolation  *************************************/
+/* Geometric evaluation / interpolation / extrapolation *********************/
 
 void _nmod_geometric_progression_init_function(nmod_geometric_progression_t G,
                                                ulong r, slong len, nmod_t mod,
@@ -612,6 +617,9 @@ void nmod_poly_evaluate_geometric_nmod_vec_fast(nn_ptr ys, const nmod_poly_t pol
 void _nmod_poly_interpolate_geometric_nmod_vec_fast_precomp(nn_ptr poly, nn_srcptr v, const nmod_geometric_progression_t G, slong len, nmod_t mod);
 void nmod_poly_interpolate_geometric_nmod_vec_fast_precomp(nmod_poly_t poly, nn_srcptr v, const nmod_geometric_progression_t G, slong len);
 void nmod_poly_interpolate_geometric_nmod_vec_fast(nmod_poly_t poly, ulong r, nn_srcptr ys, slong len);
+
+void nmod_poly_extrapolate_geometric(nn_ptr oval, slong olen, nn_srcptr ival, slong ilen, slong offset, ulong r, nmod_t mod);
+void nmod_poly_extrapolate_geometric_precomp(nn_ptr oval, slong olen, nn_srcptr ival, slong ilen, slong offset, const nmod_geometric_progression_t G);
 
 /* Interpolation  ************************************************************/
 
