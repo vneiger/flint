@@ -1614,7 +1614,7 @@ Extrapolation
     r^{2(k+i)}))_{0 \le i < m}` of some polynomial `f` of degree less than `m`,
     evaluated on the subsequence `(c \cdot r^{2(k+i)})_{0 \le i < m}` of the
     geometric progression, for some given `k \ge 0`. Then the output ``oval``
-    is the list of values `f(c \cdot r^{2(\ell+j)})_{0 \le j < n}`, for the
+    is the list of values `(f(c \cdot r^{2(\ell+j)}))_{0 \le j < n}`, for the
     starting index `\ell = k + \texttt{offset}`.
 
     The input constraints are as follows. The algorithm does not need to know
