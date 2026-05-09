@@ -18,7 +18,7 @@ void nmod_poly_extrapolate_geometric_precomp(nn_ptr oval, slong olen,
                                              const nmod_geometric_progression_t G)
 {
     /* precomputation has been done */
-    FLINT_ASSERT((G->function >> 2) & 1);
+    FLINT_ASSERT((G->function & UWORD(4)) == UWORD(4));
     /* input/output points are disjoint, and stay within precomputed data length */
     FLINT_ASSERT((offset >= ilen && G->len >= offset+olen)
                  || (offset <= -olen && G->len >= ilen-offset));
