@@ -1176,7 +1176,7 @@ Power series special functions
               int _gr_poly_cos_series(gr_ptr c, gr_srcptr h, slong hlen, slong n, gr_ctx_t ctx)
               int gr_poly_cos_series(gr_poly_t c, const gr_poly_t h, slong n, gr_ctx_t ctx)
               int _gr_poly_cos_pi_series(gr_ptr c, gr_srcptr h, slong hlen, slong n, gr_ctx_t ctx)
-              int gr_poly_cos_pi_series(gr_poly_t c, const gr_poly_t h, slong n, gr_ctx_t ctx);
+              int gr_poly_cos_pi_series(gr_poly_t c, const gr_poly_t h, slong n, gr_ctx_t ctx)
 
     Compute `s = \sin(h)`, `c = \cos(h)` as power series truncated to length `m`,
     or `s = \sin(\pi h)`, `c = \cos(\pi h)` for the ``pi`` variants.
