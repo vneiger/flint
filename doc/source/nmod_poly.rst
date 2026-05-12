@@ -2451,9 +2451,7 @@ of polynomial multiplication.
 
 .. function:: void _nmod_poly_tan_series(nn_ptr g, nn_srcptr h, slong hlen, slong n, nmod_t mod)
 
-    Set `g = \operatorname{tan}(h) + O(x^n)`. Assumes `n > 0` and that `h`
-    is zero-padded as necessary to length `n`. Aliasing of `g` and `h` is
-    not allowed. Uses Newton iteration to invert the atan function.
+    Set `g = \operatorname{tan}(h) + O(x^n)`. Assumes `n > 0` and `hlen > 0`.
 
 .. function:: void nmod_poly_tan_series(nmod_poly_t g, const nmod_poly_t h, slong n)
 
@@ -2480,11 +2478,9 @@ of polynomial multiplication.
 
     Set `g = \operatorname{cosh}(h) + O(x^n)`.
 
-.. function:: void _nmod_poly_tanh_series(nn_ptr g, nn_srcptr h, slong n, nmod_t mod)
+.. function:: void _nmod_poly_tanh_series(nn_ptr g, nn_srcptr h, slong hlen, slong n, nmod_t mod)
 
-    Set `g = \operatorname{tanh}(h) + O(x^n)`. Assumes `n > 0` and that `h`
-    is zero-padded as necessary to length `n`. Uses the identity
-    `\tanh(x) = (e^{2x}-1)/(e^{2x}+1)`.
+    Set `g = \operatorname{tanh}(h) + O(x^n)`. Assumes `n > 0` and `hlen > 0`.
 
 .. function:: void nmod_poly_tanh_series(nmod_poly_t g, const nmod_poly_t h, slong n)
 

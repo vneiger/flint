@@ -878,7 +878,7 @@ void nmod_poly_sinh_series(nmod_poly_t g, const nmod_poly_t h, slong n);
 void _nmod_poly_cosh_series(nn_ptr g, nn_srcptr h, slong n, nmod_t mod);
 void nmod_poly_cosh_series(nmod_poly_t g, const nmod_poly_t h, slong n);
 
-void _nmod_poly_tanh_series(nn_ptr g, nn_srcptr h, slong n, nmod_t mod);
+void _nmod_poly_tanh_series(nn_ptr g, nn_srcptr h, slong hlen, slong n, nmod_t mod);
 void nmod_poly_tanh_series(nmod_poly_t g, const nmod_poly_t h, slong n);
 
 void _nmod_poly_log_series(nn_ptr res, nn_srcptr f, slong flen, slong n, nmod_t mod);
