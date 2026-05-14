@@ -1596,6 +1596,49 @@ Interpolation
     Uses fast geometric multipoint interpolation, building a temporary geometric progression precomputation.
 
 
+Extrapolation
+--------------------------------------------------------------------------------
+
+.. function:: void nmod_poly_extrapolate_geometric_precomp(nn_ptr oval, slong olen, nn_srcptr ival, slong ilen, slong offset, const nmod_geometric_progression_t G)
+              void nmod_poly_extrapolate_geometric(nn_ptr oval, slong olen, nn_srcptr ival, slong ilen, slong offset, ulong r, nmod_t mod)
+
+    This extrapolates the ``ilen`` input values ``ival`` to compute ``olen``
+    output values ``oval``, based on points that are powers of `r^2` in
+    geometric progression; ``offset`` specifies the output points relative to
+    the input ones.
+
+    More precisely, let `m` stand for ``ilen``, let `n` stand for ``olen``, and
+    let `c` be any integer that is invertible modulo ``mod.n``. In this
+    description we assume `r` has "large enough" order; more details are given
+    below. The input ``ival`` is interpreted as the list of values `(f(c \cdot
+    r^{2(k+i)}))_{0 \le i < m}` of some polynomial `f` of degree less than `m`,
+    evaluated on the subsequence `(c \cdot r^{2(k+i)})_{0 \le i < m}` of the
+    geometric progression, for some given `k \ge 0`. Then the output ``oval``
+    is the list of values `(f(c \cdot r^{2(\ell+j)}))_{0 \le j < n}`, for the
+    starting index `\ell = k + \texttt{offset}`.
+
+    The input constraints are as follows. The algorithm does not need to know
+    about `c`, nor about `k` and `\ell` except for their difference
+    `\texttt{offset} = \ell - k`. The value `r` should be reduced modulo
+    ``mod.n``. There are two situations: forward extrapolation (when `\ell >
+    k`, i.e., ``offset`` is positive) and backward extrapolation (when `\ell <
+    k`, i.e., ``offset`` is negative).
+
+    - In the forward case, `r` should have sufficient multiplicative order so
+      that none of the first ``offset + olen`` powers of `r^2` is one, and
+      one should have ``offset >= ilen``. The latter means that the input and
+      output lists of points are disjoint (since `\ell \ge k+m`).
+
+    - In the backward case, `r` should have sufficient multiplicative order so
+      that none of the first ``ilen - offset`` powers of `r^2` is one, and one
+      should have ``offset + olen <= 0`` (recall that here ``offset`` is
+      negative). The latter means that the input and output lists of points are
+      disjoint (since `\ell+n \le k`).
+
+    The function without ``_precomp`` builds a temporary geometric progression
+    precomputation relative to ``r`` and ``mod``, and calls the version with
+    ``_precomp`` with this additional data.
+
 Composition
 --------------------------------------------------------------------------------
 
