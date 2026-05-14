@@ -1063,7 +1063,7 @@ Derivative and integral
     term is set to zero. In particular, the integral of the zero
     polynomial is the zero polynomial.
 
-.. function:: void void _fmpq_poly_integral_offset(fmpz * rpoly, fmpz_t rden, const fmpz * poly, const fmpz_t den, slong len, slong m)
+.. function:: void _fmpq_poly_integral_offset(fmpz * rpoly, fmpz_t rden, const fmpz * poly, const fmpz_t den, slong len, slong m)
 
     Sets ``(rpoly, rden, len)`` to the offset integral of
     ``(poly, den, len1)`` mapping $c_k$ to $c_k / (k + m)$.
