@@ -31,19 +31,24 @@
     provide, and a NEON tier; folding them back into machine_vectors.h is
     a possible separate change.
 
-    Rounding to the nearest integer. fpv_rint requires |x| <= 2^51, and is
-    the classical add-and-subtract of 3*2^51, which for such an x lands in
-    the binade [2^52, 2^53) where the unit in the last place is 1, hence
-    rounds to the nearest integer (ties to even) in two additions. The
-    rounding instructions (vroundpd, vrndscalepd) have no such restriction
-    but are slower on every Intel core measured: a standalone microkernel
-    probe of the fp50 kernel gains 50% on Arrow Lake (AVX2), 10-12% on Ice
-    Lake and 16-22% on Cascade Lake (AVX-512) from the two additions, and
-    is unchanged on Zen 4, Zen 5 and Apple M4. NEON keeps frintn, which is
-    one cheap instruction and has no restriction.
+    Rounding to the nearest integer. Every rounding here is of a product,
+    through fpv_rint_mul(x, y) = rint(x*y), which requires |x*y| <= 2^51
+    and is a fused multiply-add of the constant 3*2^51 followed by a
+    subtraction of it: the sum lands in the binade [2^52, 2^53) where the
+    unit in the last place is 1, hence rounds to the nearest integer (ties
+    to even), with a quotient error of at most 1/2 rather than the
+    1/2 + 2^-(B+1) of a separately rounded product (this is what the
+    analysis in fft_small/mulmod_satisfies_bounds.c calls the optimal
+    q_error). The rounding instructions (vroundpd, vrndscalepd) have no
+    such restriction but cost one operation more here and are slower on
+    every Intel core measured: a standalone microkernel probe of the fp50
+    kernel gains 50% on Arrow Lake (AVX2), 10-12% on Ice Lake and 16-22%
+    on Cascade Lake (AVX-512) from dropping them, and is unchanged on Zen
+    4, Zen 5 and Apple M4. NEON keeps frintn, which is one cheap
+    instruction, has no restriction, and leaves the operation count equal.
 
-    All the uses here stay inside |x| <= 2^51: mul_fp50.c rounds a*b/n with
-    |a*b| <= n^2/4 and n < 2^50, and acc/n with |acc| <= (1 + 9/8 KC) n;
+    All the uses here stay inside |x*y| <= 2^51: mul_fp50.c rounds a*b/n
+    with |a*b| <= n^2/4 and n < 2^50, and acc/n with |acc| <= (1 + 9/8 KC) n;
     mul_k52.c rounds hi*c/n with |hi| < 2^31, and r*c/n with |r| <= n/2 and
     c < n <= 2^52, whence at most (n-1)/2 < 2^51.
 
@@ -63,6 +68,7 @@
       fpv_reduce_pm1n(x, n, ninv)   x - n*rint(x/n) up to a quotient error
                                     below 2^-12, so in (-0.51 n, 0.51 n),
                                     for integer |x| < min(2^53, 2^40 n)
+      fpv_rint_mul(x, y)            rint(x*y), for |x*y| <= 2^51
       fpv_pm1n_to_pmhn(x, n)        (-3/2 n, 3/2 n) -> [-n/2, n/2]
       fpv_reduce_0n(x, n)           [-n, n] -> [0, n)
 
@@ -91,7 +97,7 @@
 # define FPV_GENERIC 1
 #endif
 
-/* the rounding constant of fpv_rint, 3*2^51 */
+/* the rounding constant of fpv_rint_mul, 3*2^51 */
 #define FPV_RND_MAGIC 0x1.8p52
 
 #if defined(FPV_AVX512)
@@ -114,12 +120,12 @@ FLINT_FORCE_INLINE fpv fpv_mul(fpv a, fpv b) { return _mm512_mul_pd(a, b); }
 FLINT_FORCE_INLINE fpv fpv_fmadd(fpv a, fpv b, fpv c) { return _mm512_fmadd_pd(a, b, c); }
 FLINT_FORCE_INLINE fpv fpv_fnmadd(fpv a, fpv b, fpv c) { return _mm512_fnmadd_pd(a, b, c); }
 
-/* |a| <= 2^51; see the header comment for why this is not vrndscalepd */
+/* rint(a*b) for |a*b| <= 2^51; see the header comment */
 FLINT_FORCE_INLINE fpv
-fpv_rint(fpv a)
+fpv_rint_mul(fpv a, fpv b)
 {
     const fpv magic = _mm512_set1_pd(FPV_RND_MAGIC);
-    return _mm512_sub_pd(_mm512_add_pd(a, magic), magic);
+    return _mm512_sub_pd(_mm512_fmadd_pd(a, b, magic), magic);
 }
 
 /* x < 0 ? x + n : x, then x >= n ? x - n : x */
@@ -195,12 +201,12 @@ FLINT_FORCE_INLINE fpv fpv_mul(fpv a, fpv b) { return _mm256_mul_pd(a, b); }
 FLINT_FORCE_INLINE fpv fpv_fmadd(fpv a, fpv b, fpv c) { return _mm256_fmadd_pd(a, b, c); }
 FLINT_FORCE_INLINE fpv fpv_fnmadd(fpv a, fpv b, fpv c) { return _mm256_fnmadd_pd(a, b, c); }
 
-/* |a| < 2^51 */
+/* rint(a*b) for |a*b| <= 2^51 */
 FLINT_FORCE_INLINE fpv
-fpv_rint(fpv a)
+fpv_rint_mul(fpv a, fpv b)
 {
     const fpv magic = _mm256_set1_pd(FPV_RND_MAGIC);
-    return _mm256_sub_pd(_mm256_add_pd(a, magic), magic);
+    return _mm256_sub_pd(_mm256_fmadd_pd(a, b, magic), magic);
 }
 
 FLINT_FORCE_INLINE fpv
@@ -295,7 +301,9 @@ FLINT_FORCE_INLINE fpv fpv_mul(fpv a, fpv b) { return vmulq_f64(a, b); }
 FLINT_FORCE_INLINE fpv fpv_fmadd(fpv a, fpv b, fpv c) { return vfmaq_f64(c, a, b); }
 FLINT_FORCE_INLINE fpv fpv_fnmadd(fpv a, fpv b, fpv c) { return vfmsq_f64(c, a, b); }
 
-FLINT_FORCE_INLINE fpv fpv_rint(fpv a) { return vrndnq_f64(a); }
+/* frintn is one instruction and unrestricted, so no rounding constant here */
+FLINT_FORCE_INLINE fpv
+fpv_rint_mul(fpv a, fpv b) { return vrndnq_f64(vmulq_f64(a, b)); }
 
 FLINT_FORCE_INLINE fpv
 fpv_reduce_0n(fpv x, fpv n)
@@ -419,12 +427,12 @@ FPV_FMA3(fpv_fnmadd, fma(-a.v[i], b.v[i], c.v[i]))
 #undef FPV_FMA3
 
 FLINT_FORCE_INLINE fpv
-fpv_rint(fpv a)
+fpv_rint_mul(fpv a, fpv b)
 {
     fpv r;
     slong i;
     for (i = 0; i < FPV_VL; i++)
-        r.v[i] = (a.v[i] + FPV_RND_MAGIC) - FPV_RND_MAGIC;
+        r.v[i] = fma(a.v[i], b.v[i], FPV_RND_MAGIC) - FPV_RND_MAGIC;
     return r;
 }
 
@@ -498,14 +506,14 @@ FLINT_FORCE_INLINE fpv
 fpv_mulmod(fpv a, fpv b, fpv n, fpv ninv)
 {
     fpv h = fpv_mul(a, b);
-    fpv q = fpv_rint(fpv_mul(h, ninv));
+    fpv q = fpv_rint_mul(h, ninv);
     return fpv_sub(fpv_fnmadd(q, n, h), fpv_fnmadd(a, b, h));
 }
 
 FLINT_FORCE_INLINE fpv
 fpv_reduce_pm1n(fpv x, fpv n, fpv ninv)
 {
-    return fpv_fnmadd(fpv_rint(fpv_mul(x, ninv)), n, x);
+    return fpv_fnmadd(fpv_rint_mul(x, ninv), n, x);
 }
 
 #endif

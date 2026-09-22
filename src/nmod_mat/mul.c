@@ -75,10 +75,20 @@ nmod_mat_mul(nmod_mat_t C, const nmod_mat_t A, const nmod_mat_t B)
           depending on the kernel underneath. With several threads the
           kernels split C across the pool themselves.
         - Without IFMA, k52 and fp50 are the single-pass options from 33
-          bits on; standalone microkernel measurements (Zen 4, Arrow
-          Lake, Apple M4) put k52 1.15-1.5x ahead of fp50 and both well
-          ahead of blas + CRT, to be confirmed by the profile on complete
-          multiplications (K52_MIN_BITS, FP50_MAX_BITS).
+          bits on, and which of the two wins is a property of the
+          instruction set rather than of the modulus (FP50_MAX_BITS).
+          On x86 fp50 wins everywhere measured (1.0-2.1x on Cascade Lake
+          and Meteor Lake): it keeps one accumulator per tile cell where
+          k52 needs three, hence a tile 2.7x wider and fewer operand
+          loads per product. On NEON the single-instruction widening
+          multiply-add (smlal) reverses this and k52 wins from dimension
+          48 on (1.4x on Apple M4). Above 2^50, where fp50 stops, k52 is
+          the only single-pass option.
+        - These two are 1.4-3.4x faster than blas + CRT up to a
+          dimension that grows with the modulus size, and lose beyond it
+          (K52_BLAS_CUTOFF): on Apple M4 that dimension is 320-448,
+          Accelerate's dgemm being far out of reach of a NEON kernel; on
+          the x86 machines measured it is 768 and beyond, or never.
     */
 #if FLINT_BITS == 64
     if (min_dim >= FLINT_NMOD_MAT_MUL_U32_MIN_DIM
@@ -111,13 +121,17 @@ nmod_mat_mul(nmod_mat_t C, const nmod_mat_t A, const nmod_mat_t B)
                 simd_mul = nmod_mat_mul_u32;
         }
         else if (FLINT_NMOD_MAT_MUL_K52_MIN_BITS > 0
-                 && bits >= FLINT_NMOD_MAT_MUL_K52_MIN_BITS)
+                 && bits >= FLINT_NMOD_MAT_MUL_K52_MIN_BITS
+                 && (FLINT_NMOD_MAT_MUL_K52_BLAS_CUTOFF <= 0
+                     || min_dim < FLINT_NMOD_MAT_MUL_K52_BLAS_CUTOFF))
         {
             /*
                 33 to 52 bits without IFMA, where the alternative is
-                4-5 dgemm passes and a CRT: the integer two-limb kernel,
-                or the floating point one where the parameters prefer it
-                (it stops below 2^50)
+                4-5 dgemm passes and a CRT: the floating point kernel
+                where the parameters prefer it (it stops below 2^50),
+                the integer two-limb one otherwise. Past
+                K52_BLAS_CUTOFF the multimodular route wins after all
+                and this falls through to the dispatch below.
             */
             if (bits <= FLINT_NMOD_MAT_MUL_FP50_MAX_BITS)
                 simd_mul = nmod_mat_mul_fp50;

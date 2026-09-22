@@ -500,7 +500,7 @@ k52_finish(k52_acc acc, const k52_consts * C)
     r2 = k52_red(acc.a2, C);
 
     /* to [-n/2, n/2] first: the mulmod then rounds a quotient of at most
-       (n-1)/2 < 2^51, which is what fpv_rint wants (mul_fp_vec.h) */
+       (n-1)/2 < 2^51, which is what fpv_rint_mul wants (mul_fp_vec.h) */
     rM = fpv_pm1n_to_pmhn(rM, C->nv);
     r2 = fpv_pm1n_to_pmhn(r2, C->nv);
 

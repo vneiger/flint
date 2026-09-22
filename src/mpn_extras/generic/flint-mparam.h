@@ -67,6 +67,11 @@
       FP50_MAX_BITS        in that range, the floating point kernel
                            nmod_mat_mul_fp50 is preferred to k52 up to
                            this modulus bit size (through 50; 0: never)
+      K52_BLAS_CUTOFF      in that range, nmod_mat_mul_blas and its CRT are
+                           preferred to k52 / fp50 from this dimension on
+                           (0: never). The crossover grows with the modulus
+                           size, since blas needs more primes; the value is
+                           the one for the bottom of the range.
 */
 #define FLINT_NMOD_MAT_MUL_U32_MIN_DIM 8
 #define FLINT_NMOD_MAT_MUL_U32_BLAS_CUTOFF 256
@@ -75,5 +80,6 @@
 #define FLINT_NMOD_MAT_MUL_U52_LO_MAX_BITS 0
 #define FLINT_NMOD_MAT_MUL_K52_MIN_BITS 33
 #define FLINT_NMOD_MAT_MUL_FP50_MAX_BITS 0
+#define FLINT_NMOD_MAT_MUL_K52_BLAS_CUTOFF 0
 
 #endif
