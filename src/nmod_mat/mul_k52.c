@@ -28,13 +28,12 @@
 
     Every partial product is below 2^52.7 in absolute value, so
     a k-block of KC = 256 products accumulates in signed 64-bit lanes with
-    no reduction at all, as in the IFMA kernel of mul_u52.c. The operands
-    of a k step are one 64-bit lane per entry holding the two int32 limbs
-    (a0 low, a1 high): on x86 vpmuldq reads the low halves, so the first
-    limb is the lane itself, the second a shift, and their sum an add; on
-    NEON the narrowing vmovn / vshrn do the same. One splat, one shift and
-    one add per A entry, the same per B vector, and three multiply-adds per
-    accumulator triple.
+    no reduction at all. The operands of a "k step" are one 64-bit lane per
+    entry holding the two int32 limbs (a0 low, a1 high): on x86 vpmuldq reads
+    the low halves, so the first limb is the lane itself, the second a shift,
+    and their sum an add; on NEON the narrowing vmovn / vshrn do the same. One
+    splat, one shift and one add per A entry, the same per B vector, and three
+    multiply-adds per accumulator triple.
 
     At the end of a block the three accumulators are combined modulo n in
     double precision with the mulmod of fft_small (mul_fp_vec.h). Each
@@ -51,17 +50,17 @@
     absolute value, for which fft_small's analysis gives an output below
     1.26 n, see mul_fp_vec.h): the sum is below 1.51 n < 2^53 in absolute
     value, hence exact, and a last reduce_pm1n and a sign fix give the
-    canonical residue, which is below 2^52 and stores as an integer. The
-    floating point reduction is what limits the modulus to 2^52: the
-    integer part alone would take 54 bits.
+    canonical residue, which is below 2^52 and stores as an integer.
 
-    On machines without AVX512-IFMA this is the candidate for 33 to 52
-    bit moduli: 3 multiply-adds plus overhead per product against 4-5
-    dgemm passes and a CRT for nmod_mat_mul_blas, and 6-7 floating point
-    operations for the all-floating-point kernel of mul_fp50.c (measured
-    microkernels: 1.15-1.5x faster than that one on Zen 4, Arrow Lake and
-    Apple M4; the profile p-mul_tune.c compares complete multiplications).
-    With IFMA nmod_mat_mul_u52 does the same job with 2 multiply-adds.
+    NOTE The floating point modular reduction is what limits the modulus to
+    2^52: the integer part alone would accept 54 bits.
+
+    On machines without AVX512-IFMA (where nmod_mat_mul_u52 should be used),
+    this is a good candidate for 33 to 52 bit moduli. It does 3 multiply-adds
+    plus overhead per product, against 4-5 dgemm passes and a CRT for
+    nmod_mat_mul_blas, and 6-7 floating point operations for the
+    all-floating-point kernel of mul_fp50.c. The profile
+    p-mul_tune.c can be used to compare complete multiplications).
 
     The packing, the register-tile microkernel, the blocked core and the
     thread split are those of mul_blocked_templ.h; the backends (AVX-512,
@@ -486,7 +485,7 @@ k52_red(k52_vi x, const k52_consts * C)
     acc0 + 2^L (accM - acc0 - acc2) + 2^(2L) acc2 mod n, canonical.
 
     Kept out of line: inlined, the many vector constants of the reduction
-    stay live across the k loop, and on AVX2 (16 registers) that made the
+    stay live across the k loop, and on AVX2 (16 registers) that can make the
     compiler spill accumulators of the microkernel; the call runs once per
     accumulator triple per k-block, which is negligible.
 */

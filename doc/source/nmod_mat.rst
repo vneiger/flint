@@ -466,7 +466,7 @@ Matrix multiplication
     Tries to set `C = AB` with integer SIMD instructions (AVX-512, AVX2,
     NEON, or plain C otherwise) for a modulus up to `2^{52}`: each entry is
     split into two 27-bit limbs and the product is formed as a two-limb
-    Karatsuba product, three widening `32 \times 32 \to 64` bit multiplications
+    Karatsuba product, three widening `32b \times 32b \to 64b` multiplications
     accumulated in three 64-bit accumulators, which are combined modulo `n`
     in double precision at the end of each block. Returns `1` for success
     and `0` if the modulus exceeds `2^{52}` (or on a 32-bit word size).

@@ -14,7 +14,7 @@
     the modular multiplication of fft_small.
 
     Every product is reduced as it is formed: the entries are lifted to
-    doubles in the symmetric range |a| <= n/2, and a k step computes
+    doubles in the symmetric range |a| <= n/2, and one "k step" computes
 
         acc += mulmod(a, b) = a*b - n*rint(a*b/n)
 
@@ -31,10 +31,9 @@
     nmod_mat_mul_blas needs several dgemm passes and a CRT, on any machine
     with a vector FMA. Its cost is 6-7 floating point operations per
     product against 1 for a dgemm, 2 for nmod_mat_mul_u32 and 3 for the
-    integer two-limb kernel of mul_k52.c, which is the alternative on the
-    same machines: measured microkernels place this one 1.15-1.5x behind
-    mul_k52.c (Zen 4, Arrow Lake, Apple M4); the profile p-mul_tune.c
-    compares the two on complete multiplications.
+    integer two-limb kernel of mul_k52.c. The latter is the alternative on the
+    same machines and how they compare depends on the architecture;
+    use the profile p-mul_tune.c to compare them on complete multiplications.
 
     The packing, the register-tile microkernel, the blocked core and the
     thread split are those of mul_blocked_templ.h; the vector primitives

@@ -28,8 +28,8 @@
     The primitives are not taken from machine_vectors.h because the kernels
     want a fixed lane count per ISA (vec8d is only an emulation on AVX2),
     conversions between 64-bit integers and doubles that it does not
-    provide, and a NEON tier; folding them back into machine_vectors.h is
-    a possible separate change.
+    provide, and a NEON tier. Folding these back into machine_vectors.h is
+    a possible future perspective.
 
     Rounding to the nearest integer. Every rounding here is of a product,
     through fpv_rint_mul(x, y) = rint(x*y), which requires |x*y| <= 2^51

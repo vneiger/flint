@@ -53,7 +53,7 @@ nmod_mat_mul(nmod_mat_t C, const nmod_mat_t A, const nmod_mat_t B)
         mulmod of fft_small, moduli below 2^50). The parameters come from
         flint-mparam.h and were measured with
         src/nmod_mat/profile/p-mul_tune.c; the picture on the machines
-        measured so far (Ice Lake, Meteor Lake, Zen 4, Apple M4) is:
+        measured so far (Cascade/Ice/Meteor Lake, Zen 4, Apple M4) is:
 
         - Where nmod_mat_mul_blas needs several dgemm passes and a CRT
           (k*(n/2)^2 >= 2^53, always the case from 25 bits on), the SIMD
