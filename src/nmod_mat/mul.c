@@ -45,10 +45,13 @@ nmod_mat_mul(nmod_mat_t C, const nmod_mat_t A, const nmod_mat_t B)
     slong flint_num_threads = flint_get_num_threads();
 
     /*
-        Moduli up to 2^52: integer SIMD kernels with delayed reduction,
-        nmod_mat_mul_u32 (any 64-bit target, moduli below 2^32) and
-        nmod_mat_mul_u52 (AVX512-IFMA, moduli up to 2^52). The parameters
-        come from flint-mparam.h and were measured with
+        Moduli up to 2^52: SIMD kernels with delayed reduction,
+        nmod_mat_mul_u32 (any 64-bit target, moduli below 2^32),
+        nmod_mat_mul_u52 (AVX512-IFMA, moduli up to 2^52) and, without
+        IFMA, nmod_mat_mul_k52 (two-limb integer Karatsuba, moduli up to
+        2^52) or nmod_mat_mul_fp50 (all in double precision with the
+        mulmod of fft_small, moduli below 2^50). The parameters come from
+        flint-mparam.h and were measured with
         src/nmod_mat/profile/p-mul_tune.c; the picture on the machines
         measured so far (Ice Lake, Meteor Lake, Zen 4, Apple M4) is:
 
@@ -71,6 +74,11 @@ nmod_mat_mul(nmod_mat_t C, const nmod_mat_t A, const nmod_mat_t B)
           calls come back here) pays from somewhere between 512 and 1024,
           depending on the kernel underneath. With several threads the
           kernels split C across the pool themselves.
+        - Without IFMA, k52 and fp50 are the single-pass options from 33
+          bits on; standalone microkernel measurements (Zen 4, Arrow
+          Lake, Apple M4) put k52 1.15-1.5x ahead of fp50 and both well
+          ahead of blas + CRT, to be confirmed by the profile on complete
+          multiplications (K52_MIN_BITS, FP50_MAX_BITS).
     */
 #if FLINT_BITS == 64
     if (min_dim >= FLINT_NMOD_MAT_MUL_U32_MIN_DIM
@@ -101,6 +109,20 @@ nmod_mat_mul(nmod_mat_t C, const nmod_mat_t A, const nmod_mat_t B)
             if (!one_pass || FLINT_NMOD_MAT_MUL_U32_BLAS_CUTOFF <= 0
                     || min_dim < FLINT_NMOD_MAT_MUL_U32_BLAS_CUTOFF)
                 simd_mul = nmod_mat_mul_u32;
+        }
+        else if (FLINT_NMOD_MAT_MUL_K52_MIN_BITS > 0
+                 && bits >= FLINT_NMOD_MAT_MUL_K52_MIN_BITS)
+        {
+            /*
+                33 to 52 bits without IFMA, where the alternative is
+                4-5 dgemm passes and a CRT: the integer two-limb kernel,
+                or the floating point one where the parameters prefer it
+                (it stops below 2^50)
+            */
+            if (bits <= FLINT_NMOD_MAT_MUL_FP50_MAX_BITS)
+                simd_mul = nmod_mat_mul_fp50;
+            else
+                simd_mul = nmod_mat_mul_k52;
         }
 
         if (simd_mul != NULL)
