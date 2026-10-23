@@ -63,13 +63,46 @@
 # define NMOD_MAT_HAVE_VM_U32 0
 #endif
 
+/*
+    Whether the vector-matrix products of nmod_vec_mul.c have their u64
+    path, for the moduli the paths above leave (on x86 with AVX2 or
+    AVX-512: n >= 2^50, n > 2^52 with IFMA, and 2^32 < n < 2^50 without a
+    vector FMA): the entries are split into two limbs of at most 32 bits
+    whose vpmuludq products are accumulated in several lanes, as in the
+    split limbs dot products of nmod_vec/dot_split_limbs.c. Then every
+    modulus has a SIMD path.
+*/
+#if FLINT_BITS == 64 && defined(__AVX2__) \
+        && !defined(FLINT_MACHINE_VECTORS_FORCE_GENERIC) \
+        && !defined(FLINT_MACHINE_VECTORS_STRICT_C)
+# define NMOD_MAT_HAVE_VM_U64 1
+#else
+# define NMOD_MAT_HAVE_VM_U64 0
+#endif
+
 /* whether nmod_mat_nmod_vec_mul and _nmod_mat_mul_rows_simd delay their
    reductions for this modulus (SIMD accumulation), rather than one modular
-   multiplication per entry */
-#define NMOD_MAT_NMOD_VEC_MUL_IS_SIMD(n) \
+   multiplication per entry; _IS_U64: whether this is with the u64 path */
+#define _NMOD_MAT_NMOD_VEC_MUL_IS_SIMD_SMALL(n) \
     ((NMOD_MAT_HAVE_MUL_U52 && (n) <= (UWORD(1) << 52)) \
      || (NMOD_MAT_HAVE_VM_U32 && (n) <= (UWORD(1) << 32)) \
      || (NMOD_MAT_HAVE_FPV && (n) < (UWORD(1) << 50)))
+#define NMOD_MAT_NMOD_VEC_MUL_IS_SIMD(n) \
+    (_NMOD_MAT_NMOD_VEC_MUL_IS_SIMD_SMALL(n) || NMOD_MAT_HAVE_VM_U64)
+#define NMOD_MAT_NMOD_VEC_MUL_IS_U64(n) \
+    (NMOD_MAT_HAVE_VM_U64 && !_NMOD_MAT_NMOD_VEC_MUL_IS_SIMD_SMALL(n))
+
+/*
+    The fewest columns of B for which nmod_mat_mul uses the u64 path of
+    _nmod_mat_mul_rows_simd: from 16 columns on it was faster than the
+    classical code (and than nmod_mat_mul_k52 at 51-52 bits) for every
+    inner dimension k >= 2 and 1 to 4 rows, by 1.3-2.4x at k = 2 and up
+    to 11-14x for large k (Cascade Lake, 51 to 64 bits). With fewer, the
+    vectors are partly padding, and these small products lost to the
+    two-word dot products of the classical code in some shapes (by up to
+    1.3x with 10 to 12 columns, 1.9x with 4).
+*/
+#define NMOD_MAT_MUL_ROWS_U64_MIN_COLS 16
 
 /*
     Whether the few-columns products of mul_cols.c have a vectorized path
@@ -95,6 +128,17 @@
 # define NMOD_MAT_MUL_ROWS_MAX 8
 #else
 # define NMOD_MAT_MUL_ROWS_MAX 4
+#endif
+
+/* whether nmod_mat_mul has SIMD kernels for this modulus (mul_u32 below
+   2^32 on any 64-bit target, mul_u52 with IFMA, mul_fp50 or mul_k52 with
+   a vector FMA, up to 2^52), which use several threads */
+#if FLINT_BITS == 64
+# define NMOD_MAT_MUL_HAVE_SIMD_KERNEL(n) \
+    ((n) <= (UWORD(1) << 32) \
+     || ((n) <= (UWORD(1) << 52) && (NMOD_MAT_HAVE_MUL_U52 || NMOD_MAT_HAVE_FPV)))
+#else
+# define NMOD_MAT_MUL_HAVE_SIMD_KERNEL(n) 0
 #endif
 
 /* whether, for this modulus, nmod_mat_mul prefers the SIMD kernels to
@@ -168,6 +212,69 @@ int _nmod_mat_mul_rows_simd(ulong * const * c, const ulong * const * a,
 */
 int _nmod_mat_mul_cols_simd(nmod_mat_t C, const nmod_mat_t A,
                             const nmod_mat_t B);
+
+/*
+    PLE decomposition (ple*.c). The internal functions take
+    Q = pivots_nonpivots (not NULL) and a bound max_nonpivots on the number
+    of columns without pivot met while some rows are not yet pivot rows:
+    if it is nonnegative and exceeded, they stop and return -1, leaving P,
+    Q and A undefined. A negative bound means no limit. _nmod_mat_ple
+    chooses the algorithm.
+*/
+slong _nmod_mat_ple(slong * P, slong * Q, nmod_mat_t A, slong max_nonpivots);
+slong _nmod_mat_ple_classical(slong * P, slong * Q, nmod_mat_t A,
+                              slong max_nonpivots);
+slong _nmod_mat_ple_classical_delayed(slong * P, slong * Q, nmod_mat_t A,
+                                      slong max_nonpivots);
+slong _nmod_mat_ple_crout(slong * P, slong * Q, nmod_mat_t A,
+                          slong max_nonpivots);
+slong _nmod_mat_ple_recursive(slong * P, slong * Q, nmod_mat_t A,
+                              slong max_nonpivots);
+
+/* the recursion of _nmod_mat_ple_recursive, whose subproblems with
+   min(m, n) >= cutoff recurse again and the others use the delayed
+   algorithm; with cutoff <= 0, the subproblems use _nmod_mat_ple (this
+   is _nmod_mat_ple_recursive). Small cutoffs are for the tests. */
+slong _nmod_mat_ple_recursive_cutoff(slong * P, slong * Q, nmod_mat_t A,
+                                     slong max_nonpivots, slong cutoff);
+
+/* moves P[r] to position k and P[k..r-1] down to P[k+1..r]   (k <= r) */
+static inline void
+_nmod_mat_ple_rotate(slong * P, slong k, slong r)
+{
+    slong i, t = P[r];
+
+    for (i = r; i > k; i--)
+        P[i] = P[i - 1];
+    P[k] = t;
+}
+
+/*
+    End of the base cases that exchange rows (delayed, Crout). These store
+    the pivot row k in row k of A, and the other rows in the rows rank, ...,
+    m - 1 of A in any order, orig[i] being the index in the input of the
+    row stored in row i of A. The pivot of a column is the row with a
+    nonzero entry of smallest index in the input among the rows that are
+    not pivot rows yet, which is the first one in the logical order of
+    ple_classical.c (these rows are in increasing order there), and P[k] =
+    orig[k] for k < rank. This function sets P[rank..m) to the indices of
+    the other rows in increasing order, puts these rows in this order (orig
+    is destroyed), and appends the columns without pivot to Q in
+    increasing order.
+*/
+void _nmod_mat_ple_rows_finish(slong * P, slong * Q, nmod_mat_t A,
+                               slong * orig, slong rank);
+
+/* new row i of A = old row perm[i], in place (fixed rows not touched) */
+void _nmod_mat_ple_permute_rows(nmod_mat_t A, const slong * perm);
+
+/* end of the base cases: rows put in the order of P, columns without
+   pivot appended to Q in increasing order */
+void _nmod_mat_ple_finish(slong * P, slong * Q, nmod_mat_t A, slong rank);
+
+/* the public interface of an algorithm: flags, NULL pivots_nonpivots */
+slong _nmod_mat_ple_wrap(slong * P, slong * pivots_nonpivots, nmod_mat_t A,
+        int flags, slong (* ple)(slong *, slong *, nmod_mat_t, slong));
 
 /*
     Whether nmod_mat_addmul and nmod_mat_submul (single-threaded, below

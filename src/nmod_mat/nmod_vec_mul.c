@@ -39,6 +39,14 @@
       double precision with the mulmod of fft_small (nmod_mat_mul_fp50),
       the accumulators being brought back to (-0.51 n, 0.51 n) every four
       rows;
+    - otherwise with AVX2 or AVX-512 (n >= 2^50, or n > 2^52 with IFMA),
+      the vpmuludq products of limbs of at most 32 bits of the entries are
+      accumulated in three to six lanes per column as in the split limbs
+      dot products of nmod_vec/dot_split_limbs.c, carried into each other
+      every few rows (n <= 2^61) or never (32-bit limbs), and the totals
+      (up to three words) are reduced once at the end; for B larger than
+      L2 the rows go by chunks of 16, the accumulators being kept in L2
+      in between;
     - otherwise the scalar code: one full modular multiplication per entry
       (nmod_mat_nmod_vec_mul), or the classical product (nmod_mat_mul).
 */
@@ -321,9 +329,58 @@ vm_u52_regs(ulong * const * c, const ulong * const * a, slong len,
 
 #endif  /* u52 */
 
-#if FLINT_BITS == 64 && NMOD_MAT_HAVE_VM_U32
+#if FLINT_BITS == 64 && (NMOD_MAT_HAVE_VM_U32 || NMOD_MAT_HAVE_VM_U64)
 
 #include <immintrin.h>
+
+/* 64-bit lanes for the integer paths on x86 (u32 and u64 below); the
+   shift counts of vmu_srli / vmu_slli are constants, those of vmu_srlv /
+   vmu_sllv vectors (a count of 64 or more gives 0) */
+#if defined(__AVX512F__)
+# define VMU_VL 8
+typedef __m512i vmu_t;
+typedef __mmask8 vmu_mask_t;
+# define vmu_zero()        _mm512_setzero_si512()
+# define vmu_set1(x)       _mm512_set1_epi64(x)
+# define vmu_loadu(p)      _mm512_loadu_si512((const void *) (p))
+# define vmu_storeu(p, x)  _mm512_storeu_si512((void *) (p), x)
+# define vmu_mul(x, y)     _mm512_mul_epu32(x, y)
+# define vmu_add(x, y)     _mm512_add_epi64(x, y)
+# define vmu_sub(x, y)     _mm512_sub_epi64(x, y)
+# define vmu_and(x, y)     _mm512_and_si512(x, y)
+# define vmu_or(x, y)      _mm512_or_si512(x, y)
+# define vmu_srli(x, c)    _mm512_srli_epi64(x, c)
+# define vmu_slli(x, c)    _mm512_slli_epi64(x, c)
+# define vmu_srlv(x, c)    _mm512_srlv_epi64(x, c)
+# define vmu_sllv(x, c)    _mm512_sllv_epi64(x, c)
+/* the first w lanes (0 < w <= VMU_VL), and a load of them (zero above) */
+# define vmu_mask(w)       ((__mmask8) ((1 << (w)) - 1))
+# define vmu_loadu_mask(p, m) _mm512_maskz_loadu_epi64(m, (const void *) (p))
+#else
+# define VMU_VL 4
+typedef __m256i vmu_t;
+typedef __m256i vmu_mask_t;
+# define vmu_zero()        _mm256_setzero_si256()
+# define vmu_set1(x)       _mm256_set1_epi64x(x)
+# define vmu_loadu(p)      _mm256_loadu_si256((const __m256i *) (p))
+# define vmu_storeu(p, x)  _mm256_storeu_si256((__m256i *) (p), x)
+# define vmu_mul(x, y)     _mm256_mul_epu32(x, y)
+# define vmu_add(x, y)     _mm256_add_epi64(x, y)
+# define vmu_sub(x, y)     _mm256_sub_epi64(x, y)
+# define vmu_and(x, y)     _mm256_and_si256(x, y)
+# define vmu_or(x, y)      _mm256_or_si256(x, y)
+# define vmu_srli(x, c)    _mm256_srli_epi64(x, c)
+# define vmu_slli(x, c)    _mm256_slli_epi64(x, c)
+# define vmu_srlv(x, c)    _mm256_srlv_epi64(x, c)
+# define vmu_sllv(x, c)    _mm256_sllv_epi64(x, c)
+# define vmu_mask(w)       _mm256_cmpgt_epi64(_mm256_set1_epi64x(w), \
+                                              _mm256_set_epi64x(3, 2, 1, 0))
+# define vmu_loadu_mask(p, m) _mm256_maskload_epi64((const long long *) (p), m)
+#endif
+
+#endif
+
+#if FLINT_BITS == 64 && NMOD_MAT_HAVE_VM_U32
 
 /*
     Moduli up to 2^32 without IFMA: vpmuludq products below 2^64, split
@@ -334,31 +391,11 @@ vm_u52_regs(ulong * const * c, const ulong * const * a, slong len,
     between two of them are long (VM_U32_ROWS at least).
 */
 
-#if defined(__AVX512F__)
-# define VMU_VL 8
-typedef __m512i vmu_t;
-# define vmu_zero()        _mm512_setzero_si512()
-# define vmu_set1(x)       _mm512_set1_epi64(x)
-# define vmu_loadu(p)      _mm512_loadu_si512((const void *) (p))
-# define vmu_storeu(p, x)  _mm512_storeu_si512((void *) (p), x)
-# define vmu_mul(x, y)     _mm512_mul_epu32(x, y)
-# define vmu_add(x, y)     _mm512_add_epi64(x, y)
-# define vmu_and(x, y)     _mm512_and_si512(x, y)
-# define vmu_srli56(x)     _mm512_srli_epi64(x, 56)
+#if VMU_VL == 8
 /* vectors of columns per register block for r rows (2 r nv + r + 3 of
    32 registers), powers of two */
 static const int vm_u32_regs_nv[4] = {8, 4, 4, 2};
 #else
-# define VMU_VL 4
-typedef __m256i vmu_t;
-# define vmu_zero()        _mm256_setzero_si256()
-# define vmu_set1(x)       _mm256_set1_epi64x(x)
-# define vmu_loadu(p)      _mm256_loadu_si256((const __m256i *) (p))
-# define vmu_storeu(p, x)  _mm256_storeu_si256((__m256i *) (p), x)
-# define vmu_mul(x, y)     _mm256_mul_epu32(x, y)
-# define vmu_add(x, y)     _mm256_add_epi64(x, y)
-# define vmu_and(x, y)     _mm256_and_si256(x, y)
-# define vmu_srli56(x)     _mm256_srli_epi64(x, 56)
 /* 16 registers */
 static const int vm_u32_regs_nv[4] = {4, 2, 1, 1};
 #endif
@@ -419,7 +456,7 @@ vm_u32_block(ulong * const * c, vmu_t * lo, vmu_t * hi,
             {
                 p = vmu_mul(av[s], bv);
                 lo[s * nv + v] = vmu_add(lo[s * nv + v], vmu_and(p, mask));
-                hi[s * nv + v] = vmu_add(hi[s * nv + v], vmu_srli56(p));
+                hi[s * nv + v] = vmu_add(hi[s * nv + v], vmu_srli(p, 56));
             }
         }
         if (wl == VMU_VL)
@@ -434,14 +471,14 @@ vm_u32_block(ulong * const * c, vmu_t * lo, vmu_t * hi,
         {
             p = vmu_mul(av[s], bv);
             lo[s * nv + v] = vmu_add(lo[s * nv + v], vmu_and(p, mask));
-            hi[s * nv + v] = vmu_add(hi[s * nv + v], vmu_srli56(p));
+            hi[s * nv + v] = vmu_add(hi[s * nv + v], vmu_srli(p, 56));
         }
 
         if (++cnt == VM_U32_FOLD)
         {
             for (v = 0; v < r * nv; v++)
             {
-                hi[v] = vmu_add(hi[v], vmu_srli56(lo[v]));
+                hi[v] = vmu_add(hi[v], vmu_srli(lo[v], 56));
                 lo[v] = vmu_and(lo[v], mask);
             }
             cnt = 0;
@@ -690,6 +727,441 @@ vm_fp50(ulong * const * c, const ulong * const * a, slong len,
 
 #endif  /* FLINT_BITS == 64 */
 
+#if FLINT_BITS == 64 && NMOD_MAT_HAVE_VM_U64
+
+/*
+    The other moduli (n >= 2^50, or n > 2^52 with IFMA, and also
+    2^32 < n < 2^50 without a vector FMA): the 32 x 32 -> 64-bit products
+    (vpmuludq) of limbs of the entries are accumulated in 64-bit lanes
+    with no reduction until the end, as in the split limbs dot products of
+    nmod_vec/dot_split_limbs.c. Let b be the bit length of n - 1.
+
+    - split, for b <= 61: x = x1 2^s + x0 with s = ceil(b/2), x0 <= l0 =
+      2^s - 1 and x1 <= l1 = 2^(b-s) - 1, so that
+
+          a x = a0 x0 + 2^s (a0 x1 + a1 x0) + 2^2s a1 x1;
+
+      L, M, H accumulate the three coefficients, each term being at most
+      P = max(l0^2, 2 l0 l1). Every F rows each lane carries its high bits
+      into the next accumulator,
+
+          M += L >> s, H += M >> s, Hh += H >> 32,
+
+      keeping the low s, s and 32 bits of L, M, H. This preserves
+      L + 2^s M + 2^2s (H + 2^32 Hh) and leaves L, M < 2^s, H < 2^32, so
+      that before the next fold the lanes are below 2^32 + F P, plus
+      carries below 2^(64-s): F is the largest number of rows with
+      2^32 + F P + 2^(64-s) < 2^64 (F = 4 for b = 61, doubling as b
+      decreases: 2048 for b = 52). Four products and four additions per
+      vector of products, plus the split of the vector of B, shared by
+      the rows, and the folds.
+    - halves, for b >= 62: 32-bit limbs, whose products fill the lanes;
+      each product p is accumulated as X += p (modulo 2^64) and
+      Xh += p >> 32, for (X, Xh) = (L, Lh), (M, Mh), (H, Hh). The sum of
+      the low halves of the products is then X - 2^32 Xh modulo 2^64,
+      exact while below 2^64: no folds, but six accumulators and eight
+      more operations per vector of products.
+
+    At the end the totals (below len n^2) are formed on three words in
+    the vector registers (in halves, by carrying through their 32-bit
+    digits), shifted by the normalization of n and reduced by the scalar
+    code: two steps of the division with the precomputed inverse of
+    NMOD_RED2, one when the totals are below n 2^64.
+
+    Register blocks of nv vectors of columns share the loads of B between
+    up to 4 rows. When the rows of B fit in half of VM_L2_BYTES, or in a
+    single register block, each block goes through all of them. Otherwise
+    the columns are cut into blocks of at most VM_U64_WIDTH, whose
+    accumulators are kept in a buffer, and each of these goes through the
+    rows VM_U64_ROWS at a time, its register blocks one after the other:
+    B is then read as VM_U64_ROWS streams of consecutive vectors, which
+    the hardware prefetchers follow, whereas narrow register blocks going
+    through all the rows of a B in L3 or in memory wait for its latency
+    (Cascade Lake, 1 to 4 rows: 2.5-7.5x slower for B of 8 to 64 MB).
+*/
+
+/* B in at most this many columns at a time when its rows are read by
+   chunks: the accumulators (32 or 48 bytes per column and row of a) stay
+   in L2 */
+#ifndef VM_U64_WIDTH
+# define VM_U64_WIDTH 2048
+#endif
+/* rows per chunk, when the rows are read by chunks */
+#ifndef VM_U64_ROWS
+# define VM_U64_ROWS 16
+#endif
+/* most rows of B per call of vm_u64: in halves, the 32-bit digits of the
+   totals stay below 2^64 up to 2^30 rows */
+#ifndef VM_U64_MAX_LEN
+# define VM_U64_MAX_LEN (WORD(1) << 28)
+#endif
+
+/* rows sharing the loads of B, and vectors of columns per register block
+   for r rows (split: 3 r nv accumulators, Hh being only used by the
+   folds, halves: 6 r nv, plus 2 r + 4 registers) */
+#if VMU_VL == 8
+# define VM_U64_GROUP(split) 4
+static const int vm_u64_nv[2][4] = {{4, 2, 1, 1}, {8, 3, 2, 1}};
+#else
+# define VM_U64_GROUP(split) ((split) ? 2 : 1)
+static const int vm_u64_nv[2][4] = {{1, 1, 1, 1}, {2, 1, 1, 1}};
+#endif
+#define VM_U64_GROUP_MAX 4
+#define VM_U64_NV_MAX 8
+
+typedef struct
+{
+    nmod_t mod;
+    ulong nn;       /* n << norm */
+    slong F;        /* split: rows between two folds */
+    int s;          /* split: bits of the low limb */
+    int split;
+    int two;        /* the totals are below n 2^64 */
+}
+vm_u64_ctx_struct;
+
+/* for the products of len rows */
+static void
+vm_u64_ctx_init(vm_u64_ctx_struct * C, nmod_t mod, slong len)
+{
+    const int b = FLINT_BIT_COUNT(mod.n - 1);
+    ulong t2, t1, t0;
+
+    FLINT_ASSERT(mod.n >= 2 && len <= VM_U64_MAX_LEN);
+
+    C->mod = mod;
+    C->nn = mod.n << mod.norm;
+    C->split = (b <= 61);
+    C->s = (b + 1) / 2;
+    C->F = 0;
+
+    if (C->split)
+    {
+        const ulong l0 = (UWORD(1) << C->s) - 1;
+        const ulong l1 = (UWORD(1) << (b - C->s)) - 1;
+        const ulong P = FLINT_MAX(l0 * l0, 2 * l0 * l1);
+        /* 2^64 - 1 - 2^32 - 2^(64-s) */
+        const ulong room = UWORD_MAX - (UWORD(1) << 32)
+                                     - (UWORD(1) << (FLINT_BITS - C->s));
+
+        C->F = (slong) FLINT_MIN(room / P, (ulong) VM_U64_MAX_LEN);
+    }
+
+    /* the totals are at most len (n - 1)^2 = t2 2^128 + t1 2^64 + ... */
+    umul_ppmm(t1, t0, mod.n - 1, mod.n - 1);
+    umul_ppmm(t2, t1, t1, (ulong) len);
+    add_ssaaaa(t2, t1, t2, t1, UWORD(0), n_mulhi(t0, (ulong) len));
+    C->two = (t2 == 0 && t1 < mod.n);
+}
+
+/* (u1 2^64 + u0) mod nn for u1 < nn: NMOD_RED2 on normalized words */
+FLINT_FORCE_INLINE ulong
+vm_u64_red2(ulong u1, ulong u0, ulong nn, ulong ninv)
+{
+    ulong q1, q0, r;
+
+    umul_ppmm(q1, q0, ninv, u1);
+    add_ssaaaa(q1, q0, q1, q0, u1, u0);
+    r = u0 - (q1 + 1) * nn;
+    if (r > q0)
+        r += nn;
+    if (r >= nn)
+        r -= nn;
+    return r;
+}
+
+/* c[j] = (t2[j] 2^128 + t1[j] 2^64 + t0[j]) mod n for j < cnt, where the
+   totals are below n 2^128 (below n 2^64 if C->two) */
+FLINT_STATIC_NOINLINE void
+vm_u64_reduce(ulong * c, slong cnt, const ulong * t2, const ulong * t1,
+              const ulong * t0, const vm_u64_ctx_struct * C)
+{
+    const int norm = C->mod.norm;
+    const vmu_t sh = vmu_set1(norm), shc = vmu_set1(FLINT_BITS - norm);
+    const vmu_t x2 = vmu_loadu(t2), x1 = vmu_loadu(t1), x0 = vmu_loadu(t0);
+    ulong u2[VMU_VL], u1[VMU_VL], u0[VMU_VL];
+    slong j;
+
+    /* shifted left by norm (by 64 to the right when norm = 0: zero) */
+    vmu_storeu(u2, vmu_or(vmu_sllv(x2, sh), vmu_srlv(x1, shc)));
+    vmu_storeu(u1, vmu_or(vmu_sllv(x1, sh), vmu_srlv(x0, shc)));
+    vmu_storeu(u0, vmu_sllv(x0, sh));
+
+    if (C->two)
+        for (j = 0; j < cnt; j++)
+            c[j] = vm_u64_red2(u1[j], u0[j], C->nn, C->mod.ninv) >> norm;
+    else
+        for (j = 0; j < cnt; j++)
+            c[j] = vm_u64_red2(vm_u64_red2(u2[j], u1[j], C->nn, C->mod.ninv),
+                               u0[j], C->nn, C->mod.ninv) >> norm;
+}
+
+/*
+    One block of nv vectors of columns jb <= j < jb + w for r rows and the
+    rows i0 <= i < i1 of B, where B and the c[t] point at the first column
+    of the block of at most VM_U64_WIDTH columns, whose accumulator state
+    is st: acc[k] of row t at st + (t nacc + k) sw + jb. The accumulators
+    start from zero (first) or from st; at the end they are stored to st,
+    or (last) their totals are reduced into c. The last vector, of
+    wl = w - VMU_VL (nv - 1) columns, is loaded with a mask.
+
+    r, nv and split are constants at each call site, so that acc is
+    register allocated: split uses acc[0..3] = L, M, H, Hh (Hh, only
+    touched by the folds, being spilled if needed), halves acc[0..5] = L,
+    Lh, M, Mh, H, Hh.
+*/
+FLINT_FORCE_INLINE void
+vm_u64_block(ulong * const * c, ulong * st, slong sw,
+             const ulong * const * a, const ulong * B, slong stride,
+             slong jb, slong w, slong i0, slong i1, int first, int last,
+             int r, int nv, int split, const vm_u64_ctx_struct * C)
+{
+    const int nacc = split ? 4 : 6;
+    const slong wl = w - VMU_VL * (nv - 1);
+    const vmu_t sv = vmu_set1(C->s), mk = vmu_set1((UWORD(1) << C->s) - 1);
+    const vmu_t m32 = vmu_set1(UWORD(0xFFFFFFFF));
+    const vmu_mask_t m = vmu_mask(wl);
+    vmu_t acc[6][VM_U64_GROUP_MAX * VM_U64_NV_MAX];
+    vmu_t a0[VM_U64_GROUP_MAX], a1[VM_U64_GROUP_MAX], bv, b1, p;
+    slong i, i2;
+    int t, k, v;
+
+    for (t = 0; t < r; t++)
+        for (k = 0; k < nacc; k++)
+            for (v = 0; v < nv; v++)
+                acc[k][t * nv + v] = first ? vmu_zero()
+                    : vmu_loadu(st + (t * nacc + k) * sw + jb + VMU_VL * v);
+
+    for (i = i0; i < i1; i = i2)
+    {
+        i2 = split ? FLINT_MIN(i1, i + C->F) : i1;
+
+        for ( ; i < i2; i++)
+        {
+            const ulong * b = B + i * stride + jb;
+
+            /* the limbs of a[t][i], split in the vector registers (in
+               halves, vpmuludq reads the low half of a0) */
+            for (t = 0; t < r; t++)
+            {
+                a0[t] = vmu_set1(a[t][i]);
+                if (split)
+                {
+                    a1[t] = vmu_srlv(a0[t], sv);
+                    a0[t] = vmu_and(a0[t], mk);
+                }
+                else
+                    a1[t] = vmu_srli(a0[t], 32);
+            }
+
+            for (v = 0; v < nv; v++)
+            {
+                if (v < nv - 1 || wl == VMU_VL)
+                    bv = vmu_loadu(b + VMU_VL * v);
+                else
+                    bv = vmu_loadu_mask(b + VMU_VL * v, m);
+
+                if (split)
+                {
+                    const vmu_t b0 = vmu_and(bv, mk);
+                    b1 = vmu_srlv(bv, sv);
+                    for (t = 0; t < r; t++)
+                    {
+                        const int x = t * nv + v;
+                        acc[0][x] = vmu_add(acc[0][x], vmu_mul(a0[t], b0));
+                        acc[2][x] = vmu_add(acc[2][x], vmu_mul(a1[t], b1));
+                        p = vmu_add(vmu_mul(a0[t], b1), vmu_mul(a1[t], b0));
+                        acc[1][x] = vmu_add(acc[1][x], p);
+                    }
+                }
+                else
+                {
+                    b1 = vmu_srli(bv, 32);
+                    for (t = 0; t < r; t++)
+                    {
+                        const int x = t * nv + v;
+                        p = vmu_mul(a0[t], bv);
+                        acc[0][x] = vmu_add(acc[0][x], p);
+                        acc[1][x] = vmu_add(acc[1][x], vmu_srli(p, 32));
+                        p = vmu_mul(a1[t], b1);
+                        acc[4][x] = vmu_add(acc[4][x], p);
+                        acc[5][x] = vmu_add(acc[5][x], vmu_srli(p, 32));
+                        p = vmu_mul(a0[t], b1);
+                        acc[2][x] = vmu_add(acc[2][x], p);
+                        acc[3][x] = vmu_add(acc[3][x], vmu_srli(p, 32));
+                        p = vmu_mul(a1[t], bv);
+                        acc[2][x] = vmu_add(acc[2][x], p);
+                        acc[3][x] = vmu_add(acc[3][x], vmu_srli(p, 32));
+                    }
+                }
+            }
+        }
+
+        if (split)
+        {
+            for (v = 0; v < r * nv; v++)
+            {
+                acc[1][v] = vmu_add(acc[1][v], vmu_srlv(acc[0][v], sv));
+                acc[0][v] = vmu_and(acc[0][v], mk);
+                acc[2][v] = vmu_add(acc[2][v], vmu_srlv(acc[1][v], sv));
+                acc[1][v] = vmu_and(acc[1][v], mk);
+                acc[3][v] = vmu_add(acc[3][v], vmu_srli(acc[2][v], 32));
+                acc[2][v] = vmu_and(acc[2][v], m32);
+            }
+        }
+    }
+
+    if (!last)
+    {
+        for (t = 0; t < r; t++)
+            for (k = 0; k < nacc; k++)
+                for (v = 0; v < nv; v++)
+                    vmu_storeu(st + (t * nacc + k) * sw + jb + VMU_VL * v,
+                               acc[k][t * nv + v]);
+        return;
+    }
+
+    for (t = 0; t < r; t++)
+    {
+        for (v = 0; v < nv; v++)
+        {
+            const int x = t * nv + v;
+            ulong t2[VMU_VL], t1[VMU_VL], t0[VMU_VL];
+
+            if (split)
+            {
+                /* L + 2^s M + 2^2s (H + 2^32 Hh) with L, M < 2^s and
+                   H < 2^32, and 2 <= 2s <= 62 */
+                const vmu_t s2 = vmu_set1(2 * C->s);
+                const vmu_t s2c = vmu_set1(FLINT_BITS - 2 * C->s);
+                const vmu_t lo = vmu_or(acc[0][x], vmu_sllv(acc[1][x], sv));
+                const vmu_t y0 = vmu_or(acc[2][x], vmu_slli(acc[3][x], 32));
+                const vmu_t y1 = vmu_srli(acc[3][x], 32);
+
+                vmu_storeu(t0, vmu_or(lo, vmu_sllv(y0, s2)));
+                vmu_storeu(t1, vmu_or(vmu_srlv(y0, s2c), vmu_sllv(y1, s2)));
+                vmu_storeu(t2, vmu_srlv(y1, s2c));
+            }
+            else
+            {
+                /* digits of weight 2^0, 2^32, 2^64, 2^96, with the sums of
+                   the low halves X - 2^32 Xh */
+                vmu_t d0 = vmu_sub(acc[0][x], vmu_slli(acc[1][x], 32));
+                vmu_t d1 = vmu_sub(acc[2][x], vmu_slli(acc[3][x], 32));
+                vmu_t d2 = vmu_sub(acc[4][x], vmu_slli(acc[5][x], 32));
+                vmu_t d3 = acc[5][x];
+
+                d1 = vmu_add(d1, acc[1][x]);
+                d2 = vmu_add(d2, acc[3][x]);
+
+                d1 = vmu_add(d1, vmu_srli(d0, 32));
+                d2 = vmu_add(d2, vmu_srli(d1, 32));
+                d3 = vmu_add(d3, vmu_srli(d2, 32));
+                vmu_storeu(t0, vmu_or(vmu_and(d0, m32), vmu_slli(d1, 32)));
+                vmu_storeu(t1, vmu_or(vmu_and(d2, m32), vmu_slli(d3, 32)));
+                vmu_storeu(t2, vmu_srli(d3, 32));
+            }
+
+            vm_u64_reduce(c[t] + jb + VMU_VL * v, (v < nv - 1) ? VMU_VL : wl,
+                          t2, t1, t0, C);
+        }
+    }
+}
+
+#define VM_U64_CASE(R, NV, SPLIT) \
+    case 64 * (SPLIT) + 8 * (R) + (NV): \
+        vm_u64_block(cw, st, sw, a, Bw, stride, jb, w, i0, i1, first, last, \
+                     R, NV, SPLIT, C); \
+        break;
+
+/* c[t] = a[t] * B for t < r rows, where B (len rows of ncols entries and
+   stride) has at most VM_U64_MAX_LEN rows */
+static void
+vm_u64(ulong * const * c, const ulong * const * a, const ulong * B,
+       slong stride, slong len, slong ncols, int r,
+       const vm_u64_ctx_struct * C)
+{
+    const int split = C->split, nacc = split ? 4 : 6;
+    const int nvmax = vm_u64_nv[split][r - 1];
+    const slong W = FLINT_MIN(ncols, VM_U64_WIDTH), sw = W + VMU_VL;
+    slong rows, j0, i0, i1;
+    ulong * st = NULL;
+    TMP_INIT;
+
+    /* B at most half of VM_L2_BYTES: with 1 MB of L2 (Cascade Lake), a
+       B of 1 MB was read up to 1.6x slower in one pass than by chunks */
+    if (ncols <= VMU_VL * nvmax || len <= VM_L2_BYTES / (16 * ncols))
+        rows = len;
+    else
+        rows = VM_U64_ROWS;
+
+    TMP_START;
+
+    if (rows < len)
+        st = TMP_ARRAY_ALLOC(r * nacc * sw, ulong);
+
+    for (j0 = 0; j0 < ncols; j0 += W)
+    {
+        const slong wj = FLINT_MIN(W, ncols - j0);
+        const ulong * Bw = B + j0;
+        ulong * cw[VM_U64_GROUP_MAX];
+        int t;
+
+        for (t = 0; t < r; t++)
+            cw[t] = c[t] + j0;
+
+        for (i0 = 0; i0 < len; i0 = i1)
+        {
+            const int first = (i0 == 0);
+            int last;
+            slong jb, w;
+
+            i1 = FLINT_MIN(len, i0 + rows);
+            last = (i1 == len);
+
+            for (jb = 0; jb < wj; jb += w)
+            {
+                /* nv: nvmax, or for the last columns the largest power of
+                   two not above their number of vectors */
+                const slong tv = (wj - jb + VMU_VL - 1) / VMU_VL;
+                int nv = nvmax;
+
+                while (nv > tv)
+                    nv = (nv == 3) ? 2 : nv / 2;
+                w = FLINT_MIN(wj - jb, VMU_VL * nv);
+
+                switch (64 * split + 8 * r + nv)
+                {
+                    VM_U64_CASE(1, 1, 1)
+                    VM_U64_CASE(1, 2, 1)
+                    VM_U64_CASE(2, 1, 1)
+                    VM_U64_CASE(1, 1, 0)
+#if VMU_VL == 8
+                    VM_U64_CASE(1, 4, 1)
+                    VM_U64_CASE(1, 8, 1)
+                    VM_U64_CASE(2, 2, 1)
+                    VM_U64_CASE(2, 3, 1)
+                    VM_U64_CASE(3, 1, 1)
+                    VM_U64_CASE(3, 2, 1)
+                    VM_U64_CASE(4, 1, 1)
+                    VM_U64_CASE(1, 2, 0)
+                    VM_U64_CASE(1, 4, 0)
+                    VM_U64_CASE(2, 1, 0)
+                    VM_U64_CASE(2, 2, 0)
+                    VM_U64_CASE(3, 1, 0)
+                    VM_U64_CASE(4, 1, 0)
+#endif
+                    default: FLINT_UNREACHABLE;
+                }
+            }
+        }
+    }
+
+    TMP_END;
+}
+
+#endif  /* u64 */
+
 int
 _nmod_mat_mul_rows_simd(ulong * const * c, const ulong * const * a, slong r,
                         slong len, const nmod_mat_t B)
@@ -753,9 +1225,75 @@ _nmod_mat_mul_rows_simd(ulong * const * c, const ulong * const * a, slong r,
         return 1;
     }
 #endif
+#if NMOD_MAT_HAVE_VM_U64
+    {
+        /* all the other moduli; more than VM_U64_MAX_LEN rows by parts,
+           the next ones going through a temporary */
+        const slong ncols = B->c;
+        vm_u64_ctx_struct C;
+        ulong * cc[NMOD_MAT_MUL_ROWS_MAX];
+        const ulong * aa[NMOD_MAT_MUL_ROWS_MAX];
+        ulong * t = NULL;
+        slong s, g, i0, i1;
+
+        for (i0 = 0; i0 < len; i0 = i1)
+        {
+            i1 = FLINT_MIN(len, i0 + VM_U64_MAX_LEN);
+            vm_u64_ctx_init(&C, B->mod, i1 - i0);
+            g = VM_U64_GROUP(C.split);
+
+            if (i0 > 0 && t == NULL)
+                t = flint_malloc(r * ncols * sizeof(ulong));
+
+            for (s = 0; s < r; s++)
+            {
+                cc[s] = (i0 == 0) ? c[s] : t + s * ncols;
+                aa[s] = a[s] + i0;
+            }
+
+            for (s = 0; s < r; s += g)
+                vm_u64(cc + s, aa + s, nmod_mat_entry_ptr(B, i0, 0), B->stride,
+                       i1 - i0, ncols, (int) FLINT_MIN(r - s, g), &C);
+
+            if (i0 > 0)
+                for (s = 0; s < r; s++)
+                    _nmod_vec_add(c[s], c[s], cc[s], ncols, B->mod);
+        }
+
+        flint_free(t);
+        return 1;
+    }
+#endif
 #endif
 
     return 0;
+}
+
+/*
+    Whether nmod_mat_nmod_vec_mul uses _nmod_mat_mul_rows_simd rather than
+    one modular multiplication per entry, for a vector of length len >= 2
+    and ncols columns: always, except with its u64 path, whose final
+    reduction of each entry (one or two divisions with the precomputed
+    inverse after forming the total, plus the per-call setup) costs as
+    much as a few of these multiplications. It is used from len >= 4 and
+    len ncols > 32 when n <= 2^61 (split), from len >= 8 and len ncols >= 40
+    otherwise (halves): below, it lost by up to 4x at len = 2; at these
+    thresholds it wins by 1.05-1.4x (Cascade Lake).
+*/
+FLINT_FORCE_INLINE int
+vm_use_rows_simd(slong len, slong ncols, ulong n)
+{
+#if FLINT_BITS == 64 && NMOD_MAT_HAVE_VM_U64
+    if (NMOD_MAT_NMOD_VEC_MUL_IS_U64(n))
+    {
+        if (n <= (UWORD(1) << 61))
+            return len >= 4 && len * ncols > 32;
+        else
+            return len >= 8 && len * ncols >= 40;
+    }
+#endif
+    (void) len; (void) ncols; (void) n;
+    return 1;
 }
 
 void nmod_mat_nmod_vec_mul(
@@ -777,7 +1315,8 @@ void nmod_mat_nmod_vec_mul(
         return;
     }
 
-    if (len >= 2 && _nmod_mat_mul_rows_simd(&c, &a, 1, len, B))
+    if (len >= 2 && vm_use_rows_simd(len, ncols, B->mod.n)
+            && _nmod_mat_mul_rows_simd(&c, &a, 1, len, B))
         return;
 
     _nmod_vec_scalar_mul_nmod(c, nmod_mat_entry_ptr(B, 0, 0), ncols, a[0], B->mod);

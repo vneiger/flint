@@ -100,20 +100,30 @@ nmod_mat_mul(nmod_mat_t C, const nmod_mat_t A, const nmod_mat_t B)
         kernel is faster whenever it takes the shape (Apple M4: 2.0-2.5x
         at 4 rows), see NMOD_MAT_MUL_ROWS_PREFER_KERNEL.
 
+        For the moduli of its u64 tier (n >= 2^50 on x86 without IFMA,
+        n > 2^52 with IFMA, and also 2^32 < n < 2^50 without FMA), it
+        needs NMOD_MAT_MUL_ROWS_U64_MIN_COLS columns of B: with fewer, the
+        classical code is faster.
+
         NOTE It is single-threaded: with several threads it is still used
         for the shapes the threaded kernels do not take (below), which
         would otherwise go to nmod_mat_mul_classical_threaded (observed 2-7x
-        slower than it on Ice Lake, Meteor Lake, 4 threads).
+        slower than it on Ice Lake, Meteor Lake, 4 threads), and for the
+        moduli without SIMD kernel (above 2^52), for which the classical
+        code is serial with so few rows.
         TODO thread it (split the columns of B).
     */
     if (m >= 1 && m <= NMOD_MAT_MUL_ROWS_MAX && k >= 2 && n >= 1
             && ((flint_num_threads == 1
                  && !NMOD_MAT_MUL_ROWS_PREFER_KERNEL(C->mod.n))
-                || !((m >= FLINT_NMOD_MAT_MUL_SIMD_MIN_DIM
-                      && n >= FLINT_NMOD_MAT_MUL_SIMD_MIN_DIM)
-                     || (2 * m >= FLINT_NMOD_MAT_MUL_SIMD_MIN_DIM
-                         && n >= 4 * FLINT_NMOD_MAT_MUL_SIMD_MIN_DIM)))
-            && C != A && C != B && NMOD_MAT_NMOD_VEC_MUL_IS_SIMD(C->mod.n))
+                || !(NMOD_MAT_MUL_HAVE_SIMD_KERNEL(C->mod.n)
+                     && ((m >= FLINT_NMOD_MAT_MUL_SIMD_MIN_DIM
+                          && n >= FLINT_NMOD_MAT_MUL_SIMD_MIN_DIM)
+                         || (2 * m >= FLINT_NMOD_MAT_MUL_SIMD_MIN_DIM
+                             && n >= 4 * FLINT_NMOD_MAT_MUL_SIMD_MIN_DIM))))
+            && C != A && C != B && NMOD_MAT_NMOD_VEC_MUL_IS_SIMD(C->mod.n)
+            && (n >= NMOD_MAT_MUL_ROWS_U64_MIN_COLS
+                || !NMOD_MAT_NMOD_VEC_MUL_IS_U64(C->mod.n)))
     {
         ulong * c[NMOD_MAT_MUL_ROWS_MAX];
         const ulong * a[NMOD_MAT_MUL_ROWS_MAX];

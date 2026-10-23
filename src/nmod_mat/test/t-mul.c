@@ -162,10 +162,22 @@ TEST_FUNCTION_START(nmod_mat_mul, state)
                 break;
         }
 
-        if (n_randint(state, 4) == 0)
-            mod = n_randtest_not_zero(state);
-        else
-            mod = n_randbits(state, 1 + n_randint(state, FLINT_MIN(52, FLINT_BITS)));
+        switch (n_randint(state, 6))
+        {
+            case 0:
+                mod = n_randtest_not_zero(state);
+                break;
+            case 1:
+                /* 50 to 64 bits: the u64 path of the products with few
+                   rows (and mul_k52 up to 52 bits) */
+                mod = n_randbits(state,
+                                 FLINT_MIN(50 + n_randint(state, 15), FLINT_BITS));
+                break;
+            default:
+                mod = n_randbits(state,
+                                 1 + n_randint(state, FLINT_MIN(52, FLINT_BITS)));
+                break;
+        }
         /* nmod_mat_randfull does not reduce for the modulus 1 */
         mod = FLINT_MAX(mod, UWORD(2));
 
