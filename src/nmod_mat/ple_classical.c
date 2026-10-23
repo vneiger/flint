@@ -17,8 +17,8 @@
 /*
     Gaussian elimination column by column, with a reduction after each
     update. The rows stay in place: the row in logical position i is row
-    P[i] of A, and bringing the pivot row to position rank is a rotation of
-    P[rank..r] (the rows passed over keep their relative order). Rows with
+    P[i] of A, and bringing the pivot row to position rank is an upward rotation
+    of P[rank..r] (the rows passed over keep their relative order). Rows with
     a zero multiplier are not updated.
 */
 slong

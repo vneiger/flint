@@ -27,7 +27,7 @@
 
     As in ple_classical_delayed.c, the pivot row k is stored in row k of A
     (the vector-matrix products need the rows of U to form a matrix), a new
-    pivot row being exchanged with the row at the position of the rank;
+    pivot row being swapped with the row at the position of the rank;
     the other rows are stored in any order, orig[i] being the index in the
     input of the row stored in row i, and the pivot is the one with a
     nonzero entry of smallest index in the input (see

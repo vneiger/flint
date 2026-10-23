@@ -20,7 +20,7 @@
       mode = shapes  m x n uniformly random matrices, m = n/8, n/2, 2n, 8n
       mode = ranks   n x n matrices L R U, with L, U random triangular and
                      R a random rank profile matrix of rank n, n/2, n/8
-                     (many row rotations; the rank n/2, n/8 matrices have
+                     (many upward row rotations; the rank n/2, n/8 matrices have
                      many columns without pivot)
 
       bits = comma-separated list of bit sizes of the prime (default:

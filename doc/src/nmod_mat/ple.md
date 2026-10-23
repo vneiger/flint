@@ -57,20 +57,21 @@ the rows and the pivot columns are fixed. All the algorithms therefore
 compute the same output.
 
 `nmod_mat_lu` chooses the same pivot columns, but it brings each pivot row
-into place by exchanging it with another row, which changes the order of
-the rows passed over: its pivot rows need not be the row rank profile, as
-in the example below. `nmod_mat_ple` moves the pivot row up and the rows
-passed over down by one position, keeping their order: the rows without
-pivot remain in increasing order of their indices in $A$. The algorithms
-use this to avoid moving rows of the matrix too often. The classical
+into place by a swap with the row in that position, which changes the
+order of the rows passed over: its pivot rows need not be the row rank
+profile, as in the example below. `nmod_mat_ple` uses an upward rotation
+instead: the pivot row moves up, and the rows passed over move down by
+one position each, keeping their order, so that the rows without pivot
+remain in increasing order of their indices in $A$. The algorithms use
+this to avoid moving rows of the matrix too often. The classical
 algorithm keeps the rows in place in memory and records their order in
-`P` only, so that moving a row past $k$ others costs $O(k)$ operations on
-indices, and permutes the rows once at the end. The delayed algorithm
-exchanges the pivot row with the row in its position, as `nmod_mat_lu`
-does, so that the eliminations run through consecutive rows; the pivot
-of a column is then the row with a nonzero entry of smallest index in
-$A$ among the rows without pivot, and these rows are put back in
-increasing order at the end. The recursive algorithm puts the rows in
+`P` only, so that an upward rotation past $k$ rows costs $O(k)$
+operations on indices, and permutes the rows once at the end. The
+delayed and Crout algorithms swap the pivot row with the row in its
+position, as `nmod_mat_lu` does, so that the eliminations run through
+consecutive rows; the pivot of a column is then the row with a nonzero
+entry of smallest index in $A$ among the rows without pivot, and these
+rows are put back in increasing order at the end. The recursive algorithm puts the rows in
 order once for each half at each level of the recursion.
 
 ## Kernels {#kernels}
@@ -205,7 +206,7 @@ int main(void)
         flint_printf(" (%wd, %wd)", P[i], Q[i]);
     flint_printf("\n");
 
-    /* nmod_mat_lu exchanges rows instead and selects row 1, not row 0 */
+    /* nmod_mat_lu swaps rows instead and selects row 1, not row 0 */
     nmod_mat_set(LU, A);
     r = nmod_mat_lu(P, LU, 0);
     flint_printf("nmod_mat_lu: P = [%wd %wd %wd %wd]\n", P[0], P[1], P[2], P[3]);
@@ -228,12 +229,12 @@ nmod_mat_lu: P = [2 1 3 0]
 ```
 
 Column 0 has its only nonzero entry in row 2, which becomes the first
-pivot row; rows 0 and 1 move down one position each and keep their order,
-so that row 0 is the pivot row of column 1. Row 1, twice row 0, then
+pivot row by an upward rotation: rows 0 and 1 move down one position
+each and keep their order, so that row 0 is the pivot row of column 1. Row 1, twice row 0, then
 becomes zero; its row of $L$, in the last row of the output, holds the
 multiplier 2. Columns 2 and 4 have no pivot. The pivot rows 2, 0, 3 form
 the row rank profile $\{0, 2, 3\}$, and the leading $2 \times 2$
 submatrix of $A$, of rank 1, contains one entry of the rank profile
-matrix, at $(0, 1)$. `nmod_mat_lu` exchanges rows 0 and 2 instead, which
+matrix, at $(0, 1)$. `nmod_mat_lu` swaps rows 0 and 2 instead, which
 puts row 1 before row 0, and its pivot rows 2, 1, 3 are not the row rank
 profile.

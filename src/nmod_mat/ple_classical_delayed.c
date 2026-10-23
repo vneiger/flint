@@ -29,7 +29,7 @@
     are in [1, p - 1] and every unreduced entry is at most s (p - 1)^2,
     p the modulus and s = min(m, n).
 
-    As in nmod_mat_lu_classical_delayed, a new pivot row is exchanged with
+    As in nmod_mat_lu_classical_delayed, a new pivot row is swapped with
     the row of A (and of the buffer) at the position of the rank, so that
     the eliminations run through consecutive rows. The rows that are not
     pivot rows are thus stored in any order; the pivot is the one with a

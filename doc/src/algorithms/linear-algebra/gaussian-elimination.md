@@ -72,8 +72,12 @@ the earlier pivot columns, which span all earlier columns.
 
 The row permutation, in contrast, is not the row rank profile in
 general when the pivot rows are brought into place by swaps, as in
-`nmod_mat_lu`. Using cyclic rotations of rows instead reveals both profiles,
-and more [@JPS2013; @DPS2017]; see [](#rank-profile).
+`nmod_mat_lu`. Using upward rotations of rows instead reveals both
+profiles, and more [@JPS2013; @DPS2017]; see [](#rank-profile). Here a
+*swap* exchanges two rows and leaves the others in place, while an
+*upward rotation* moves a row up to a given position and the rows it
+passes over down by one position each, keeping their order; a *downward
+rotation* is the inverse move.
 
 ## Classical elimination {#classical}
 
@@ -85,7 +89,7 @@ and more [@JPS2013; @DPS2017]; see [](#rank-profile).
 1. $r \gets 0$. For $c = 0, 1, \ldots, n - 1$ while $r < m$:
    1. find the first row $i \ge r$ with $A_{ic} \ne 0$; if there is none,
       continue with the next $c$;
-   2. exchange rows $i$ and $r$ and record the exchange;
+   2. swap rows $i$ and $r$ and record the swap;
    3. for each row $i > r$: $\ell \gets A_{ic} A_{rc}^{-1}$, subtract
       $\ell$ times row $r$ from row $i$ in columns $c + 1, \ldots, n - 1$
       (nothing to do if $\ell = 0$), and store $\ell$ in column $r$ of
@@ -117,16 +121,17 @@ leading submatrix of $A$ with the entries of $\mathcal{R}_A$ that lie in
 it.
 
 ::: theorem {#thm-rotations}
-Run [](#alg-classical) with step 2 replaced by: move row $i$ to position
-$r$ and the rows in positions $r, \ldots, i - 1$ down by one position.
+Run [](#alg-classical) with step 2 replaced by the upward rotation of
+rows $r, \ldots, i$: move row $i$ to position $r$ and the rows in
+positions $r, \ldots, i - 1$ down by one position.
 Let `P[k]` be the index in $A$ of the row in position $k$ at the end.
 Then `P[r]` $< \cdots <$ `P[m-1]`, and the nonzero entries of
 $\mathcal{R}_A$ are at the positions (`P[k]`, $c_k$) for $k < r$.
 :::
 
 ::: proof
-Moving a row up past rows that keep their relative order preserves the
-following property: the rows that are not yet pivot rows are in
+An upward rotation keeps the relative order of the rows it passes over,
+hence preserves the following property: the rows that are not yet pivot rows are in
 increasing order of their indices in $A$. This gives the first claim, and
 it shows that the pivot of column $c$ is in the row of smallest index, in
 $A$, among the rows that are not yet pivot rows and have a nonzero entry
@@ -147,8 +152,8 @@ the definition of $\mathcal{R}_A$.
 the row of smallest index in $A$ with a nonzero entry among the rows that
 are not pivot rows yet, so that the order of the rows need not be kept
 in memory: `nmod_mat_ple_classical` keeps the rows in place and records
-their order in an array, moving a row past others with $O(i - r)$
-operations on indices, and `nmod_mat_ple_classical_delayed` exchanges the
+their order in an array, an upward rotation costing $O(i - r)$
+operations on indices, and `nmod_mat_ple_classical_delayed` swaps the
 pivot row with the row in position $r$; both put the rows in their order
 at the end, and `nmod_mat_ple_recursive` does so once for each half at
 each level of the recursion. With swaps, as in
@@ -196,7 +201,7 @@ the Lemire–Kaser–Kurz method when the bound is below $2^{32}$ and
 Barrett's otherwise ([](algorithms/arithmetic/barrett)).
 
 `nmod_mat_ple_classical_delayed` applies the same reductions to the
-elimination of [](#thm-rotations), exchanging the rows of the matrix and
+elimination of [](#thm-rotations), swapping the rows of the matrix and
 of the buffer as `nmod_mat_lu_classical_delayed` does; the pivot of a
 column is found while the column is reduced, as the row of smallest
 index in $A$ with a nonzero entry (see [](#rank-profile)).
@@ -220,7 +225,7 @@ its multipliers with the rows of $E$. The other entries are not touched
 before their column is processed.
 
 `nmod_mat_ple_crout` uses this schedule with the pivoting of
-[](#thm-rotations), exchanging rows as
+[](#thm-rotations), swapping rows as
 `nmod_mat_ple_classical_delayed` does. Its dot products and
 vector-matrix products delay their reductions, with SIMD code
 ([](algorithms/linear-algebra/dot-products),
@@ -264,8 +269,9 @@ same pivots, in another order: the pivots of the first $n_1$ columns
 depend only on these columns, step 4 applies the eliminations of the
 left half to the right half, and the row moves of step 5 act on the rows
 that are not pivot rows of the left half. `nmod_mat_ple_recursive` uses
-the rotations of [](#thm-rotations) in both halves, so that it computes
-the decomposition of that theorem, the same as `nmod_mat_ple_classical`.
+the upward rotations of [](#thm-rotations) in both halves, so that it
+computes the decomposition of that theorem, the same as
+`nmod_mat_ple_classical`.
 
 ::: theorem {#thm-recursive-cost}
 If two matrices of dimensions $a \times b$ and $b \times c$ can be

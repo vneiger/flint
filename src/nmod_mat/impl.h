@@ -58,9 +58,9 @@
             || defined(__AVX2__)) \
         && !defined(FLINT_MACHINE_VECTORS_FORCE_GENERIC) \
         && !defined(FLINT_MACHINE_VECTORS_STRICT_C)
-# define NMOD_MAT_HAVE_VM_U32 1
+# define NMOD_MAT_HAVE_VECMAT_U32 1
 #else
-# define NMOD_MAT_HAVE_VM_U32 0
+# define NMOD_MAT_HAVE_VECMAT_U32 0
 #endif
 
 /*
@@ -75,9 +75,9 @@
 #if FLINT_BITS == 64 && defined(__AVX2__) \
         && !defined(FLINT_MACHINE_VECTORS_FORCE_GENERIC) \
         && !defined(FLINT_MACHINE_VECTORS_STRICT_C)
-# define NMOD_MAT_HAVE_VM_U64 1
+# define NMOD_MAT_HAVE_VECMAT_U64 1
 #else
-# define NMOD_MAT_HAVE_VM_U64 0
+# define NMOD_MAT_HAVE_VECMAT_U64 0
 #endif
 
 /* whether nmod_mat_nmod_vec_mul and _nmod_mat_mul_rows_simd delay their
@@ -85,12 +85,12 @@
    multiplication per entry; _IS_U64: whether this is with the u64 path */
 #define _NMOD_MAT_NMOD_VEC_MUL_IS_SIMD_SMALL(n) \
     ((NMOD_MAT_HAVE_MUL_U52 && (n) <= (UWORD(1) << 52)) \
-     || (NMOD_MAT_HAVE_VM_U32 && (n) <= (UWORD(1) << 32)) \
+     || (NMOD_MAT_HAVE_VECMAT_U32 && (n) <= (UWORD(1) << 32)) \
      || (NMOD_MAT_HAVE_FPV && (n) < (UWORD(1) << 50)))
 #define NMOD_MAT_NMOD_VEC_MUL_IS_SIMD(n) \
-    (_NMOD_MAT_NMOD_VEC_MUL_IS_SIMD_SMALL(n) || NMOD_MAT_HAVE_VM_U64)
+    (_NMOD_MAT_NMOD_VEC_MUL_IS_SIMD_SMALL(n) || NMOD_MAT_HAVE_VECMAT_U64)
 #define NMOD_MAT_NMOD_VEC_MUL_IS_U64(n) \
-    (NMOD_MAT_HAVE_VM_U64 && !_NMOD_MAT_NMOD_VEC_MUL_IS_SIMD_SMALL(n))
+    (NMOD_MAT_HAVE_VECMAT_U64 && !_NMOD_MAT_NMOD_VEC_MUL_IS_SIMD_SMALL(n))
 
 /*
     The fewest columns of B for which nmod_mat_mul uses the u64 path of
@@ -145,7 +145,7 @@
    _nmod_mat_mul_rows_simd for the shapes both can take: moduli below 2^32
    when the rows engine only has its floating point tier for them (no
    IFMA, no x86 integer tier), where nmod_mat_mul_u32 is faster */
-#if !NMOD_MAT_HAVE_MUL_U52 && !NMOD_MAT_HAVE_VM_U32
+#if !NMOD_MAT_HAVE_MUL_U52 && !NMOD_MAT_HAVE_VECMAT_U32
 # define NMOD_MAT_MUL_ROWS_PREFER_KERNEL(n) ((n) <= (UWORD(1) << 32))
 #else
 # define NMOD_MAT_MUL_ROWS_PREFER_KERNEL(n) 0
@@ -238,7 +238,8 @@ slong _nmod_mat_ple_recursive(slong * P, slong * Q, nmod_mat_t A,
 slong _nmod_mat_ple_recursive_cutoff(slong * P, slong * Q, nmod_mat_t A,
                                      slong max_nonpivots, slong cutoff);
 
-/* moves P[r] to position k and P[k..r-1] down to P[k+1..r]   (k <= r) */
+/* upward rotation: moves P[r] to position k and P[k..r-1] down to
+   P[k+1..r] (k <= r) */
 static inline void
 _nmod_mat_ple_rotate(slong * P, slong k, slong r)
 {
@@ -250,7 +251,7 @@ _nmod_mat_ple_rotate(slong * P, slong k, slong r)
 }
 
 /*
-    End of the base cases that exchange rows (delayed, Crout). These store
+    End of the base cases that swap rows (delayed, Crout). These store
     the pivot row k in row k of A, and the other rows in the rows rank, ...,
     m - 1 of A in any order, orig[i] being the index in the input of the
     row stored in row i of A. The pivot of a column is the row with a

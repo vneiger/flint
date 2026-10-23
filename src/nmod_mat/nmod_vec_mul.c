@@ -52,27 +52,27 @@
       ones.
 */
 
-#define VM_ROWS NMOD_MAT_MUL_ROWS_MAX
+#define VECMAT_ROWS NMOD_MAT_MUL_ROWS_MAX
 
 /*
     Register blocks read 64-512 bytes per row of B and per block; up to
-    VM_REGS_MAX_COLS columns they are used, for chunks of rows of about
-    VM_L2_BYTES which the prefetching triggered by the first block leaves
+    VECMAT_REGS_MAX_COLS columns they are used, for chunks of rows of about
+    VECMAT_L2_BYTES which the prefetching triggered by the first block leaves
     in L2 for the others (with the narrow blocks of many rows this
-    prefetching stops working beyond VM_REGS_WIDE_COLS columns, where the
+    prefetching stops working beyond VECMAT_REGS_WIDE_COLS columns, where the
     rows are then taken 3 at a time); beyond, blocks of columns with
     accumulators in L1 stream the rows of B in runs of a few KB.
     FIXME measured on one machine only: need to tune these knobs for
     other machines?
 */
-#ifndef VM_L2_BYTES
-# define VM_L2_BYTES (1 << 20)
+#ifndef VECMAT_L2_BYTES
+# define VECMAT_L2_BYTES (1 << 20)
 #endif
-#ifndef VM_REGS_MAX_COLS
-# define VM_REGS_MAX_COLS 4096
+#ifndef VECMAT_REGS_MAX_COLS
+# define VECMAT_REGS_MAX_COLS 4096
 #endif
-#ifndef VM_REGS_WIDE_COLS
-# define VM_REGS_WIDE_COLS 2048
+#ifndef VECMAT_REGS_WIDE_COLS
+# define VECMAT_REGS_WIDE_COLS 2048
 #endif
 
 #if FLINT_BITS == 64 && NMOD_MAT_HAVE_MUL_U52
@@ -81,15 +81,15 @@
 
 /*
     Rows per chunk: a lane holds a residue plus the halves of up to
-    VM_U52_CHUNK products, within the bounds of u52_red2 (mul_u52_vec.h).
+    VECMAT_U52_CHUNK products, within the bounds of u52_red2 (mul_u52_vec.h).
 */
-#define VM_U52_CHUNK 511
+#define VECMAT_U52_CHUNK 511
 
 /* the per-chunk reduction of the accumulators of a block; not inlined,
-   to keep the many instantiations of vm_u52_block small */
+   to keep the many instantiations of vecmat_u52_block small */
 FLINT_STATIC_NOINLINE void
-vm_u52_reduce(__m512i * lo, __m512i * hi, slong cnt, int withhi,
-              const u52_consts * C)
+vecmat_u52_reduce(__m512i * lo, __m512i * hi, slong cnt, int withhi,
+                  const u52_consts * C)
 {
     slong v;
 
@@ -117,12 +117,12 @@ vm_u52_reduce(__m512i * lo, __m512i * hi, slong cnt, int withhi,
     Otherwise they are in L1 and nv is arbitrary.
 */
 FLINT_FORCE_INLINE void
-vm_u52_block(ulong * const * c, __m512i * lo, __m512i * hi,
-             const ulong * const * a, const nmod_mat_t B, slong j0,
-             slong i0, slong i1, int r, slong nv, int withhi, int regs,
-             __mmask8 m, const u52_consts * C)
+vecmat_u52_block(ulong * const * c, __m512i * lo, __m512i * hi,
+                 const ulong * const * a, const nmod_mat_t B, slong j0,
+                 slong i0, slong i1, int r, slong nv, int withhi, int regs,
+                 __mmask8 m, const u52_consts * C)
 {
-    __m512i av[VM_ROWS], bv;
+    __m512i av[VECMAT_ROWS], bv;
     slong i, i2, v;
     int s;
 
@@ -137,7 +137,7 @@ vm_u52_block(ulong * const * c, __m512i * lo, __m512i * hi,
 
     for (i = i0; i < i1; i = i2)
     {
-        i2 = FLINT_MIN(i1, i + VM_U52_CHUNK);
+        i2 = FLINT_MIN(i1, i + VECMAT_U52_CHUNK);
 
         for ( ; i < i2; i++)
         {
@@ -167,7 +167,7 @@ vm_u52_block(ulong * const * c, __m512i * lo, __m512i * hi,
 
         if (regs)
         {
-            __m512i buf[2 * VM_ROWS * 8];
+            __m512i buf[2 * VECMAT_ROWS * 8];
 
             for (v = 0; v < r * nv; v++)
             {
@@ -175,7 +175,7 @@ vm_u52_block(ulong * const * c, __m512i * lo, __m512i * hi,
                 if (withhi)
                     buf[r * nv + v] = hi[v];
             }
-            vm_u52_reduce(buf, buf + r * nv, r * nv, withhi, C);
+            vecmat_u52_reduce(buf, buf + r * nv, r * nv, withhi, C);
             for (v = 0; v < r * nv; v++)
             {
                 lo[v] = buf[v];
@@ -184,7 +184,7 @@ vm_u52_block(ulong * const * c, __m512i * lo, __m512i * hi,
             }
         }
         else
-            vm_u52_reduce(lo, hi, r * nv, withhi, C);
+            vecmat_u52_reduce(lo, hi, r * nv, withhi, C);
     }
 
     for (s = 0; s < r; s++)
@@ -200,26 +200,26 @@ vm_u52_block(ulong * const * c, __m512i * lo, __m512i * hi,
     column and row with the high halves, 8 without) stay in L1, so that
     the rows of B are streamed in runs of a few KB; up to 4 rows.
 */
-#ifndef VM_U52_WIDTH
-# define VM_U52_WIDTH 512
+#ifndef VECMAT_U52_WIDTH
+# define VECMAT_U52_WIDTH 512
 #endif
 
-#define VM_U52_WIDE_CASE(R) \
+#define VECMAT_U52_WIDE_CASE(R) \
     case R: \
         if (withhi) \
-            vm_u52_block(c, lo, hi, a, B, j0, 0, len, R, nv, 1, 0, m, C); \
+            vecmat_u52_block(c, lo, hi, a, B, j0, 0, len, R, nv, 1, 0, m, C); \
         else \
-            vm_u52_block(c, lo, hi, a, B, j0, 0, len, R, nv, 0, 0, m, C); \
+            vecmat_u52_block(c, lo, hi, a, B, j0, 0, len, R, nv, 0, 0, m, C); \
         break;
 
 static void
-vm_u52_wide(ulong * const * c, const ulong * const * a, slong len,
-            const nmod_mat_t B, int r, int withhi, const u52_consts * C)
+vecmat_u52_wide(ulong * const * c, const ulong * const * a, slong len,
+                const nmod_mat_t B, int r, int withhi, const u52_consts * C)
 {
     const slong ncols = B->c;
     /* columns per block: the accumulators of the r rows share the budget */
-    const slong wmax = 8 * ((withhi ? VM_U52_WIDTH : 2 * VM_U52_WIDTH) / (8 * r));
-    __m512i lo[2 * VM_U52_WIDTH / 8], hi[2 * VM_U52_WIDTH / 8];
+    const slong wmax = 8 * ((withhi ? VECMAT_U52_WIDTH : 2 * VECMAT_U52_WIDTH) / (8 * r));
+    __m512i lo[2 * VECMAT_U52_WIDTH / 8], hi[2 * VECMAT_U52_WIDTH / 8];
     slong j0 = 0;
     int s;
 
@@ -234,10 +234,10 @@ vm_u52_wide(ulong * const * c, const ulong * const * a, slong len,
 
         switch (r)
         {
-            VM_U52_WIDE_CASE(1)
-            VM_U52_WIDE_CASE(2)
-            VM_U52_WIDE_CASE(3)
-            VM_U52_WIDE_CASE(4)
+            VECMAT_U52_WIDE_CASE(1)
+            VECMAT_U52_WIDE_CASE(2)
+            VECMAT_U52_WIDE_CASE(3)
+            VECMAT_U52_WIDE_CASE(4)
             default: FLINT_UNREACHABLE;
         }
 
@@ -252,26 +252,26 @@ vm_u52_wide(ulong * const * c, const ulong * const * a, slong len,
     in memory would be bound by the latency of the store-load forwarding
     between rows when there are few of them). Each block reads its 64 nv
     bytes per row of B: when B is not in the caches, this is done for
-    chunks of rows of at most VM_L2_BYTES, which the first block brings
+    chunks of rows of at most VECMAT_L2_BYTES, which the first block brings
     into L2 for the others.
 */
-static const int vm_u52_regs_nv[VM_ROWS] = {8, 6, 4, 3, 2, 2, 1, 1};
+static const int vecmat_u52_regs_nv[VECMAT_ROWS] = {8, 6, 4, 3, 2, 2, 1, 1};
 
-#define VM_U52_REGS_CASE(R, NV) \
+#define VECMAT_U52_REGS_CASE(R, NV) \
     case 8 * (R) + (NV): \
         if (withhi) \
-            vm_u52_block(c, lo, hi, a, B, j0, i0, i1, R, NV, 1, 1, m, C); \
+            vecmat_u52_block(c, lo, hi, a, B, j0, i0, i1, R, NV, 1, 1, m, C); \
         else \
-            vm_u52_block(c, lo, hi, a, B, j0, i0, i1, R, NV, 0, 1, m, C); \
+            vecmat_u52_block(c, lo, hi, a, B, j0, i0, i1, R, NV, 0, 1, m, C); \
         break;
 
 static void
-vm_u52_regs(ulong * const * c, const ulong * const * a, slong len,
-            const nmod_mat_t B, int r, int withhi, const u52_consts * C)
+vecmat_u52_regs(ulong * const * c, const ulong * const * a, slong len,
+                const nmod_mat_t B, int r, int withhi, const u52_consts * C)
 {
     const slong ncols = B->c;
-    const int nvmax = vm_u52_regs_nv[r - 1];
-    const slong rows = FLINT_MAX(64, VM_L2_BYTES / (8 * ncols));
+    const int nvmax = vecmat_u52_regs_nv[r - 1];
+    const slong rows = FLINT_MAX(64, VECMAT_L2_BYTES / (8 * ncols));
     slong i0, i1;
     int s;
 
@@ -286,40 +286,40 @@ vm_u52_regs(ulong * const * c, const ulong * const * a, slong len,
 
         while (j0 < ncols)
         {
-            __m512i lo[VM_ROWS * 8], hi[VM_ROWS * 8];
+            __m512i lo[VECMAT_ROWS * 8], hi[VECMAT_ROWS * 8];
             const slong w = FLINT_MIN(ncols - j0, 8 * nvmax);
             const int nv = (int) ((w + 7) / 8);
             const __mmask8 m = (w % 8 == 0) ? 0xFF : (__mmask8) ((1 << (w % 8)) - 1);
 
             switch (8 * r + nv)
             {
-                VM_U52_REGS_CASE(1, 1)
-                VM_U52_REGS_CASE(1, 2)
-                VM_U52_REGS_CASE(1, 3)
-                VM_U52_REGS_CASE(1, 4)
-                VM_U52_REGS_CASE(1, 5)
-                VM_U52_REGS_CASE(1, 6)
-                VM_U52_REGS_CASE(1, 7)
-                VM_U52_REGS_CASE(1, 8)
-                VM_U52_REGS_CASE(2, 1)
-                VM_U52_REGS_CASE(2, 2)
-                VM_U52_REGS_CASE(2, 3)
-                VM_U52_REGS_CASE(2, 4)
-                VM_U52_REGS_CASE(2, 5)
-                VM_U52_REGS_CASE(2, 6)
-                VM_U52_REGS_CASE(3, 1)
-                VM_U52_REGS_CASE(3, 2)
-                VM_U52_REGS_CASE(3, 3)
-                VM_U52_REGS_CASE(3, 4)
-                VM_U52_REGS_CASE(4, 1)
-                VM_U52_REGS_CASE(4, 2)
-                VM_U52_REGS_CASE(4, 3)
-                VM_U52_REGS_CASE(5, 1)
-                VM_U52_REGS_CASE(5, 2)
-                VM_U52_REGS_CASE(6, 1)
-                VM_U52_REGS_CASE(6, 2)
-                VM_U52_REGS_CASE(7, 1)
-                VM_U52_REGS_CASE(8, 1)
+                VECMAT_U52_REGS_CASE(1, 1)
+                VECMAT_U52_REGS_CASE(1, 2)
+                VECMAT_U52_REGS_CASE(1, 3)
+                VECMAT_U52_REGS_CASE(1, 4)
+                VECMAT_U52_REGS_CASE(1, 5)
+                VECMAT_U52_REGS_CASE(1, 6)
+                VECMAT_U52_REGS_CASE(1, 7)
+                VECMAT_U52_REGS_CASE(1, 8)
+                VECMAT_U52_REGS_CASE(2, 1)
+                VECMAT_U52_REGS_CASE(2, 2)
+                VECMAT_U52_REGS_CASE(2, 3)
+                VECMAT_U52_REGS_CASE(2, 4)
+                VECMAT_U52_REGS_CASE(2, 5)
+                VECMAT_U52_REGS_CASE(2, 6)
+                VECMAT_U52_REGS_CASE(3, 1)
+                VECMAT_U52_REGS_CASE(3, 2)
+                VECMAT_U52_REGS_CASE(3, 3)
+                VECMAT_U52_REGS_CASE(3, 4)
+                VECMAT_U52_REGS_CASE(4, 1)
+                VECMAT_U52_REGS_CASE(4, 2)
+                VECMAT_U52_REGS_CASE(4, 3)
+                VECMAT_U52_REGS_CASE(5, 1)
+                VECMAT_U52_REGS_CASE(5, 2)
+                VECMAT_U52_REGS_CASE(6, 1)
+                VECMAT_U52_REGS_CASE(6, 2)
+                VECMAT_U52_REGS_CASE(7, 1)
+                VECMAT_U52_REGS_CASE(8, 1)
                 default: FLINT_UNREACHABLE;
             }
 
@@ -330,7 +330,7 @@ vm_u52_regs(ulong * const * c, const ulong * const * a, slong len,
 
 #endif  /* u52 */
 
-#if FLINT_BITS == 64 && (NMOD_MAT_HAVE_VM_U32 || NMOD_MAT_HAVE_VM_U64)
+#if FLINT_BITS == 64 && (NMOD_MAT_HAVE_VECMAT_U32 || NMOD_MAT_HAVE_VECMAT_U64)
 
 #include <immintrin.h>
 
@@ -381,33 +381,33 @@ typedef __m256i vmu_mask_t;
 
 #endif
 
-#if FLINT_BITS == 64 && NMOD_MAT_HAVE_VM_U32
+#if FLINT_BITS == 64 && NMOD_MAT_HAVE_VECMAT_U32
 
 /*
     Moduli up to 2^32 without IFMA: vpmuludq products below 2^64, split
     at bit 56 (nmod_vec/dot.c): lo accumulates the low 56 bits of the
     products, hi their high 8 bits, and lo is folded into hi every
-    VM_U32_FOLD rows. The total lo + 2^56 hi fits two limbs for any
+    VECMAT_U32_FOLD rows. The total lo + 2^56 hi fits two limbs for any
     length. The reduction to the residue is scalar, so the chunks of rows
-    between two of them are long (VM_U32_ROWS at least).
+    between two of them are long (VECMAT_U32_ROWS at least).
 */
 
 #if VMU_VL == 8
 /* vectors of columns per register block for r rows (2 r nv + r + 3 of
    32 registers), powers of two */
-static const int vm_u32_regs_nv[4] = {8, 4, 4, 2};
+static const int vecmat_u32_regs_nv[4] = {8, 4, 4, 2};
 #else
 /* 16 registers */
-static const int vm_u32_regs_nv[4] = {4, 2, 1, 1};
+static const int vecmat_u32_regs_nv[4] = {4, 2, 1, 1};
 #endif
 
-#define VM_U32_FOLD 255
-#define VM_U32_WIDTH 512
-#define VM_U32_ROWS 255
+#define VECMAT_U32_FOLD 255
+#define VECMAT_U32_WIDTH 512
+#define VECMAT_U32_ROWS 255
 /* the register blocks are narrow (128-512 bytes per row of B): beyond
    this many columns the L1 blocks are used */
-#ifndef VM_U32_REGS_MAX_COLS
-# define VM_U32_REGS_MAX_COLS (128 * VMU_VL)
+#ifndef VECMAT_U32_REGS_MAX_COLS
+# define VECMAT_U32_REGS_MAX_COLS (128 * VMU_VL)
 #endif
 
 /*
@@ -415,19 +415,19 @@ static const int vm_u32_regs_nv[4] = {4, 2, 1, 1};
     rows i0 <= i < i1 of B; lo[s * nv + v] starts from the residues in c
     (zero at first) and the residues of the totals are stored back. r is a
     constant at each call site; with nv also constant and the arrays lo,
-    hi local to the caller, they are register allocated (vm_u32_regs),
-    otherwise they are in L1 and nv is arbitrary (vm_u32_wide). A last
+    hi local to the caller, they are register allocated (vecmat_u32_regs),
+    otherwise they are in L1 and nv is arbitrary (vecmat_u32_wide). A last
     partial vector goes through a zero-padded buffer.
 */
 FLINT_FORCE_INLINE void
-vm_u32_block(ulong * const * c, vmu_t * lo, vmu_t * hi,
-             const ulong * const * a, const nmod_mat_t B, slong j0,
-             slong w, slong i0, slong i1, int r, slong nv)
+vecmat_u32_block(ulong * const * c, vmu_t * lo, vmu_t * hi,
+                 const ulong * const * a, const nmod_mat_t B, slong j0,
+                 slong w, slong i0, slong i1, int r, slong nv)
 {
     const nmod_t mod = B->mod;
     const slong wl = w - VMU_VL * (nv - 1);   /* columns of the last vector */
     const vmu_t mask = vmu_set1((UWORD(1) << 56) - 1);
-    vmu_t av[VM_ROWS], bv, p;
+    vmu_t av[VECMAT_ROWS], bv, p;
     ulong buf[VMU_VL];
     slong i, j, v;
     int s, cnt = 0;
@@ -475,7 +475,7 @@ vm_u32_block(ulong * const * c, vmu_t * lo, vmu_t * hi,
             hi[s * nv + v] = vmu_add(hi[s * nv + v], vmu_srli(p, 56));
         }
 
-        if (++cnt == VM_U32_FOLD)
+        if (++cnt == VECMAT_U32_FOLD)
         {
             for (v = 0; v < r * nv; v++)
             {
@@ -506,17 +506,18 @@ vm_u32_block(ulong * const * c, vmu_t * lo, vmu_t * hi,
     }
 }
 
-#define VM_U32_REGS_CASE(R, NV) \
+#define VECMAT_U32_REGS_CASE(R, NV) \
     case 8 * (R) + (NV): \
-        vm_u32_block(c, lo, hi, a, B, j0, w, i0, i1, R, NV); break;
+        vecmat_u32_block(c, lo, hi, a, B, j0, w, i0, i1, R, NV); break;
 
 static void
-vm_u32_regs(ulong * const * c, const ulong * const * a, slong len,
-            const nmod_mat_t B, int r)
+vecmat_u32_regs(ulong * const * c, const ulong * const * a, slong len,
+                const nmod_mat_t B, int r)
 {
     const slong ncols = B->c;
-    const int nvmax = vm_u32_regs_nv[r - 1];
-    const slong rows = FLINT_MAX(VM_U32_ROWS, VM_L2_BYTES / (8 * ncols));
+    const int nvmax = vecmat_u32_regs_nv[r - 1];
+    const slong rows = FLINT_MAX(VECMAT_U32_ROWS,
+                                 VECMAT_L2_BYTES / (8 * ncols));
     slong i0, i1;
     int s;
 
@@ -531,7 +532,7 @@ vm_u32_regs(ulong * const * c, const ulong * const * a, slong len,
 
         while (j0 < ncols)
         {
-            vmu_t lo[VM_ROWS * 8], hi[VM_ROWS * 8];
+            vmu_t lo[VECMAT_ROWS * 8], hi[VECMAT_ROWS * 8];
             /* nv: nvmax, or for the last columns the largest power of two
                not above their number of vectors */
             const slong t = (ncols - j0 + VMU_VL - 1) / VMU_VL;
@@ -544,19 +545,19 @@ vm_u32_regs(ulong * const * c, const ulong * const * a, slong len,
 
             switch (8 * r + nv)
             {
-                VM_U32_REGS_CASE(1, 1)
-                VM_U32_REGS_CASE(1, 2)
-                VM_U32_REGS_CASE(1, 4)
-                VM_U32_REGS_CASE(2, 1)
-                VM_U32_REGS_CASE(2, 2)
-                VM_U32_REGS_CASE(3, 1)
-                VM_U32_REGS_CASE(4, 1)
+                VECMAT_U32_REGS_CASE(1, 1)
+                VECMAT_U32_REGS_CASE(1, 2)
+                VECMAT_U32_REGS_CASE(1, 4)
+                VECMAT_U32_REGS_CASE(2, 1)
+                VECMAT_U32_REGS_CASE(2, 2)
+                VECMAT_U32_REGS_CASE(3, 1)
+                VECMAT_U32_REGS_CASE(4, 1)
 #if VMU_VL == 8
-                VM_U32_REGS_CASE(1, 8)
-                VM_U32_REGS_CASE(2, 4)
-                VM_U32_REGS_CASE(3, 2)
-                VM_U32_REGS_CASE(3, 4)
-                VM_U32_REGS_CASE(4, 2)
+                VECMAT_U32_REGS_CASE(1, 8)
+                VECMAT_U32_REGS_CASE(2, 4)
+                VECMAT_U32_REGS_CASE(3, 2)
+                VECMAT_U32_REGS_CASE(3, 4)
+                VECMAT_U32_REGS_CASE(4, 2)
 #endif
                 default: FLINT_UNREACHABLE;
             }
@@ -569,12 +570,12 @@ vm_u32_regs(ulong * const * c, const ulong * const * a, slong len,
 /* many columns: blocks whose accumulators (16 bytes per column and row)
    stay in L1, the rows of B streamed in runs of a few KB */
 static void
-vm_u32_wide(ulong * const * c, const ulong * const * a, slong len,
-            const nmod_mat_t B, int r)
+vecmat_u32_wide(ulong * const * c, const ulong * const * a, slong len,
+                const nmod_mat_t B, int r)
 {
     const slong ncols = B->c;
-    const slong wmax = VMU_VL * (VM_U32_WIDTH / (VMU_VL * r));
-    vmu_t lo[VM_U32_WIDTH / VMU_VL], hi[VM_U32_WIDTH / VMU_VL];
+    const slong wmax = VMU_VL * (VECMAT_U32_WIDTH / (VMU_VL * r));
+    vmu_t lo[VECMAT_U32_WIDTH / VMU_VL], hi[VECMAT_U32_WIDTH / VMU_VL];
     slong j0 = 0;
     int s;
 
@@ -588,10 +589,18 @@ vm_u32_wide(ulong * const * c, const ulong * const * a, slong len,
 
         switch (r)
         {
-            case 1: vm_u32_block(c, lo, hi, a, B, j0, w, 0, len, 1, nv); break;
-            case 2: vm_u32_block(c, lo, hi, a, B, j0, w, 0, len, 2, nv); break;
-            case 3: vm_u32_block(c, lo, hi, a, B, j0, w, 0, len, 3, nv); break;
-            case 4: vm_u32_block(c, lo, hi, a, B, j0, w, 0, len, 4, nv); break;
+            case 1:
+                vecmat_u32_block(c, lo, hi, a, B, j0, w, 0, len, 1, nv);
+                break;
+            case 2:
+                vecmat_u32_block(c, lo, hi, a, B, j0, w, 0, len, 2, nv);
+                break;
+            case 3:
+                vecmat_u32_block(c, lo, hi, a, B, j0, w, 0, len, 3, nv);
+                break;
+            case 4:
+                vecmat_u32_block(c, lo, hi, a, B, j0, w, 0, len, 4, nv);
+                break;
             default: FLINT_UNREACHABLE;
         }
 
@@ -609,18 +618,18 @@ vm_u32_wide(ulong * const * c, const ulong * const * a, slong len,
 #if defined(FPV_GENERIC)
 # error "NMOD_MAT_HAVE_FPV and the backend selection of mul_fp_vec.h disagree"
 #endif
-#define VM_HAVE_FP50 1
+#define VECMAT_HAVE_FP50 1
 
 /* balanced representative of 0 <= x < n as a double */
 FLINT_FORCE_INLINE double
-vm_sym(ulong x, ulong n)
+vecmat_sym(ulong x, ulong n)
 {
     return (x > n / 2) ? (double) (slong) (x - n) : (double) x;
 }
 
 /* columns per block for one row: the accumulators (8 bytes per column
    and row) stay in L1 */
-#define VM_FP50_WIDTH 512
+#define VECMAT_FP50_WIDTH 512
 
 /*
     One block of nv vectors of columns j0 <= j < j0 + w for r rows, with
@@ -633,13 +642,13 @@ vm_sym(ulong x, ulong n)
     partial vector goes through a zero-padded buffer.
 */
 FLINT_FORCE_INLINE void
-vm_fp50_block(ulong * const * c, fpv * acc, const ulong * const * a,
-              const nmod_mat_t B, slong j0, slong w, slong len, int r,
-              slong nv, fpv nvec, fpv ninv)
+vecmat_fp50_block(ulong * const * c, fpv * acc, const ulong * const * a,
+                  const nmod_mat_t B, slong j0, slong w, slong len, int r,
+                  slong nv, fpv nvec, fpv ninv)
 {
     const ulong n = B->mod.n;
     const slong wl = w - FPV_VL * (nv - 1);   /* columns of the last vector */
-    fpv av[VM_ROWS], bv;
+    fpv av[VECMAT_ROWS], bv;
     ulong buf[FPV_VL];
     slong i, j, v;
     int s, cnt = 0;
@@ -652,7 +661,7 @@ vm_fp50_block(ulong * const * c, fpv * acc, const ulong * const * a,
         const ulong * b = nmod_mat_entry_ptr(B, i, j0);
 
         for (s = 0; s < r; s++)
-            av[s] = fpv_set1(vm_sym(a[s][i], n));
+            av[s] = fpv_set1(vecmat_sym(a[s][i], n));
 
         for (v = 0; v < nv - 1; v++)
         {
@@ -694,14 +703,14 @@ vm_fp50_block(ulong * const * c, fpv * acc, const ulong * const * a,
 }
 
 static void
-vm_fp50(ulong * const * c, const ulong * const * a, slong len,
-        const nmod_mat_t B, int r)
+vecmat_fp50(ulong * const * c, const ulong * const * a, slong len,
+            const nmod_mat_t B, int r)
 {
     const slong ncols = B->c;
     const fpv nvec = fpv_set1((double) B->mod.n);
     const fpv ninv = fpv_set1(1.0 / (double) B->mod.n);
-    const slong wmax = FPV_VL * (VM_FP50_WIDTH / (FPV_VL * r));
-    fpv acc[VM_FP50_WIDTH / FPV_VL];
+    const slong wmax = FPV_VL * (VECMAT_FP50_WIDTH / (FPV_VL * r));
+    fpv acc[VECMAT_FP50_WIDTH / FPV_VL];
     slong j0 = 0;
 
     while (j0 < ncols)
@@ -711,10 +720,10 @@ vm_fp50(ulong * const * c, const ulong * const * a, slong len,
 
         switch (r)
         {
-            case 1: vm_fp50_block(c, acc, a, B, j0, w, len, 1, nv, nvec, ninv); break;
-            case 2: vm_fp50_block(c, acc, a, B, j0, w, len, 2, nv, nvec, ninv); break;
-            case 3: vm_fp50_block(c, acc, a, B, j0, w, len, 3, nv, nvec, ninv); break;
-            case 4: vm_fp50_block(c, acc, a, B, j0, w, len, 4, nv, nvec, ninv); break;
+            case 1: vecmat_fp50_block(c, acc, a, B, j0, w, len, 1, nv, nvec, ninv); break;
+            case 2: vecmat_fp50_block(c, acc, a, B, j0, w, len, 2, nv, nvec, ninv); break;
+            case 3: vecmat_fp50_block(c, acc, a, B, j0, w, len, 3, nv, nvec, ninv); break;
+            case 4: vecmat_fp50_block(c, acc, a, B, j0, w, len, 4, nv, nvec, ninv); break;
             default: FLINT_UNREACHABLE;
         }
 
@@ -723,12 +732,12 @@ vm_fp50(ulong * const * c, const ulong * const * a, slong len,
 }
 
 #else
-#define VM_HAVE_FP50 0
+#define VECMAT_HAVE_FP50 0
 #endif
 
 #endif  /* FLINT_BITS == 64 */
 
-#if FLINT_BITS == 64 && NMOD_MAT_HAVE_VM_U64
+#if FLINT_BITS == 64 && NMOD_MAT_HAVE_VECMAT_U64
 
 /*
     The other moduli (n >= 2^50, or n > 2^52 with IFMA, and also
@@ -770,12 +779,12 @@ vm_fp50(ulong * const * c, const ulong * const * a, slong len,
     NMOD_RED2, one when the totals are below n 2^64.
 
     Register blocks of nv vectors of columns share the loads of B between
-    up to 4 rows. When the rows of B fit in half of VM_L2_BYTES, or in a
+    up to 4 rows. When the rows of B fit in half of VECMAT_L2_BYTES, or in a
     single register block, each block goes through all of them. Otherwise
-    the columns are cut into blocks of at most VM_U64_WIDTH, whose
+    the columns are cut into blocks of at most VECMAT_U64_WIDTH, whose
     accumulators are kept in a buffer, and each of these goes through the
-    rows VM_U64_ROWS at a time, its register blocks one after the other:
-    B is then read as VM_U64_ROWS streams of consecutive vectors, which
+    rows VECMAT_U64_ROWS at a time, its register blocks one after the other:
+    B is then read as VECMAT_U64_ROWS streams of consecutive vectors, which
     the hardware prefetchers follow, whereas narrow register blocks going
     through all the rows of a B in L3 or in memory wait for its latency
     (Cascade Lake, 1 to 4 rows: 2.5-7.5x slower for B of 8 to 64 MB).
@@ -784,31 +793,31 @@ vm_fp50(ulong * const * c, const ulong * const * a, slong len,
 /* B in at most this many columns at a time when its rows are read by
    chunks: the accumulators (32 or 48 bytes per column and row of a) stay
    in L2 */
-#ifndef VM_U64_WIDTH
-# define VM_U64_WIDTH 2048
+#ifndef VECMAT_U64_WIDTH
+# define VECMAT_U64_WIDTH 2048
 #endif
 /* rows per chunk, when the rows are read by chunks */
-#ifndef VM_U64_ROWS
-# define VM_U64_ROWS 16
+#ifndef VECMAT_U64_ROWS
+# define VECMAT_U64_ROWS 16
 #endif
-/* most rows of B per call of vm_u64: in halves, the 32-bit digits of the
+/* most rows of B per call of vecmat_u64: in halves, the 32-bit digits of the
    totals stay below 2^64 up to 2^30 rows */
-#ifndef VM_U64_MAX_LEN
-# define VM_U64_MAX_LEN (WORD(1) << 28)
+#ifndef VECMAT_U64_MAX_LEN
+# define VECMAT_U64_MAX_LEN (WORD(1) << 28)
 #endif
 
 /* rows sharing the loads of B, and vectors of columns per register block
    for r rows (split: 3 r nv accumulators, Hh being only used by the
    folds, halves: 6 r nv, plus 2 r + 4 registers) */
 #if VMU_VL == 8
-# define VM_U64_GROUP(split) 4
-static const int vm_u64_nv[2][4] = {{4, 2, 1, 1}, {8, 3, 2, 1}};
+# define VECMAT_U64_GROUP(split) 4
+static const int vecmat_u64_nv[2][4] = {{4, 2, 1, 1}, {8, 3, 2, 1}};
 #else
-# define VM_U64_GROUP(split) ((split) ? 2 : 1)
-static const int vm_u64_nv[2][4] = {{1, 1, 1, 1}, {2, 1, 1, 1}};
+# define VECMAT_U64_GROUP(split) ((split) ? 2 : 1)
+static const int vecmat_u64_nv[2][4] = {{1, 1, 1, 1}, {2, 1, 1, 1}};
 #endif
-#define VM_U64_GROUP_MAX 4
-#define VM_U64_NV_MAX 8
+#define VECMAT_U64_GROUP_MAX 4
+#define VECMAT_U64_NV_MAX 8
 
 typedef struct
 {
@@ -819,16 +828,16 @@ typedef struct
     int split;
     int two;        /* the totals are below n 2^64 */
 }
-vm_u64_ctx_struct;
+vecmat_u64_ctx_struct;
 
 /* for the products of len rows */
 static void
-vm_u64_ctx_init(vm_u64_ctx_struct * C, nmod_t mod, slong len)
+vecmat_u64_ctx_init(vecmat_u64_ctx_struct * C, nmod_t mod, slong len)
 {
     const int b = FLINT_BIT_COUNT(mod.n - 1);
     ulong t2, t1, t0;
 
-    FLINT_ASSERT(mod.n >= 2 && len <= VM_U64_MAX_LEN);
+    FLINT_ASSERT(mod.n >= 2 && len <= VECMAT_U64_MAX_LEN);
 
     C->mod = mod;
     C->nn = mod.n << mod.norm;
@@ -845,7 +854,7 @@ vm_u64_ctx_init(vm_u64_ctx_struct * C, nmod_t mod, slong len)
         const ulong room = UWORD_MAX - (UWORD(1) << 32)
                                      - (UWORD(1) << (FLINT_BITS - C->s));
 
-        C->F = (slong) FLINT_MIN(room / P, (ulong) VM_U64_MAX_LEN);
+        C->F = (slong) FLINT_MIN(room / P, (ulong) VECMAT_U64_MAX_LEN);
     }
 
     /* the totals are at most len (n - 1)^2 = t2 2^128 + t1 2^64 + ... */
@@ -857,7 +866,7 @@ vm_u64_ctx_init(vm_u64_ctx_struct * C, nmod_t mod, slong len)
 
 /* (u1 2^64 + u0) mod nn for u1 < nn: NMOD_RED2 on normalized words */
 FLINT_FORCE_INLINE ulong
-vm_u64_red2(ulong u1, ulong u0, ulong nn, ulong ninv)
+vecmat_u64_red2(ulong u1, ulong u0, ulong nn, ulong ninv)
 {
     ulong q1, q0, r;
 
@@ -874,8 +883,8 @@ vm_u64_red2(ulong u1, ulong u0, ulong nn, ulong ninv)
 /* c[j] = (t2[j] 2^128 + t1[j] 2^64 + t0[j]) mod n for j < cnt, where the
    totals are below n 2^128 (below n 2^64 if C->two) */
 FLINT_STATIC_NOINLINE void
-vm_u64_reduce(ulong * c, slong cnt, const ulong * t2, const ulong * t1,
-              const ulong * t0, const vm_u64_ctx_struct * C)
+vecmat_u64_reduce(ulong * c, slong cnt, const ulong * t2, const ulong * t1,
+                  const ulong * t0, const vecmat_u64_ctx_struct * C)
 {
     const int norm = C->mod.norm;
     const vmu_t sh = vmu_set1(norm), shc = vmu_set1(FLINT_BITS - norm);
@@ -890,17 +899,18 @@ vm_u64_reduce(ulong * c, slong cnt, const ulong * t2, const ulong * t1,
 
     if (C->two)
         for (j = 0; j < cnt; j++)
-            c[j] = vm_u64_red2(u1[j], u0[j], C->nn, C->mod.ninv) >> norm;
+            c[j] = vecmat_u64_red2(u1[j], u0[j], C->nn, C->mod.ninv) >> norm;
     else
         for (j = 0; j < cnt; j++)
-            c[j] = vm_u64_red2(vm_u64_red2(u2[j], u1[j], C->nn, C->mod.ninv),
-                               u0[j], C->nn, C->mod.ninv) >> norm;
+            c[j] = vecmat_u64_red2(
+                       vecmat_u64_red2(u2[j], u1[j], C->nn, C->mod.ninv),
+                       u0[j], C->nn, C->mod.ninv) >> norm;
 }
 
 /*
     One block of nv vectors of columns jb <= j < jb + w for r rows and the
     rows i0 <= i < i1 of B, where B and the c[t] point at the first column
-    of the block of at most VM_U64_WIDTH columns, whose accumulator state
+    of the block of at most VECMAT_U64_WIDTH columns, whose accumulator state
     is st: acc[k] of row t at st + (t nacc + k) sw + jb. The accumulators
     start from zero (first) or from st; at the end they are stored to st,
     or (last) their totals are reduced into c. The last vector, of
@@ -912,18 +922,18 @@ vm_u64_reduce(ulong * c, slong cnt, const ulong * t2, const ulong * t1,
     Lh, M, Mh, H, Hh.
 */
 FLINT_FORCE_INLINE void
-vm_u64_block(ulong * const * c, ulong * st, slong sw,
-             const ulong * const * a, const ulong * B, slong stride,
-             slong jb, slong w, slong i0, slong i1, int first, int last,
-             int r, int nv, int split, const vm_u64_ctx_struct * C)
+vecmat_u64_block(ulong * const * c, ulong * st, slong sw,
+                 const ulong * const * a, const ulong * B, slong stride,
+                 slong jb, slong w, slong i0, slong i1, int first, int last,
+                 int r, int nv, int split, const vecmat_u64_ctx_struct * C)
 {
     const int nacc = split ? 4 : 6;
     const slong wl = w - VMU_VL * (nv - 1);
     const vmu_t sv = vmu_set1(C->s), mk = vmu_set1((UWORD(1) << C->s) - 1);
     const vmu_t m32 = vmu_set1(UWORD(0xFFFFFFFF));
     const vmu_mask_t m = vmu_mask(wl);
-    vmu_t acc[6][VM_U64_GROUP_MAX * VM_U64_NV_MAX];
-    vmu_t a0[VM_U64_GROUP_MAX], a1[VM_U64_GROUP_MAX], bv, b1, p;
+    vmu_t acc[6][VECMAT_U64_GROUP_MAX * VECMAT_U64_NV_MAX];
+    vmu_t a0[VECMAT_U64_GROUP_MAX], a1[VECMAT_U64_GROUP_MAX], bv, b1, p;
     slong i, i2;
     int t, k, v;
 
@@ -1063,38 +1073,38 @@ vm_u64_block(ulong * const * c, ulong * st, slong sw,
                 vmu_storeu(t2, vmu_srli(d3, 32));
             }
 
-            vm_u64_reduce(c[t] + jb + VMU_VL * v, (v < nv - 1) ? VMU_VL : wl,
-                          t2, t1, t0, C);
+            vecmat_u64_reduce(c[t] + jb + VMU_VL * v,
+                              (v < nv - 1) ? VMU_VL : wl, t2, t1, t0, C);
         }
     }
 }
 
-#define VM_U64_CASE(R, NV, SPLIT) \
+#define VECMAT_U64_CASE(R, NV, SPLIT) \
     case 64 * (SPLIT) + 8 * (R) + (NV): \
-        vm_u64_block(cw, st, sw, a, Bw, stride, jb, w, i0, i1, first, last, \
-                     R, NV, SPLIT, C); \
+        vecmat_u64_block(cw, st, sw, a, Bw, stride, jb, w, i0, i1, first, \
+                         last, R, NV, SPLIT, C); \
         break;
 
 /* c[t] = a[t] * B for t < r rows, where B (len rows of ncols entries and
-   stride) has at most VM_U64_MAX_LEN rows */
+   stride) has at most VECMAT_U64_MAX_LEN rows */
 static void
-vm_u64(ulong * const * c, const ulong * const * a, const ulong * B,
-       slong stride, slong len, slong ncols, int r,
-       const vm_u64_ctx_struct * C)
+vecmat_u64(ulong * const * c, const ulong * const * a, const ulong * B,
+           slong stride, slong len, slong ncols, int r,
+           const vecmat_u64_ctx_struct * C)
 {
     const int split = C->split, nacc = split ? 4 : 6;
-    const int nvmax = vm_u64_nv[split][r - 1];
-    const slong W = FLINT_MIN(ncols, VM_U64_WIDTH), sw = W + VMU_VL;
+    const int nvmax = vecmat_u64_nv[split][r - 1];
+    const slong W = FLINT_MIN(ncols, VECMAT_U64_WIDTH), sw = W + VMU_VL;
     slong rows, j0, i0, i1;
     ulong * st = NULL;
     TMP_INIT;
 
-    /* B at most half of VM_L2_BYTES: with 1 MB of L2 (Cascade Lake), a
+    /* B at most half of VECMAT_L2_BYTES: with 1 MB of L2 (Cascade Lake), a
        B of 1 MB was read up to 1.6x slower in one pass than by chunks */
-    if (ncols <= VMU_VL * nvmax || len <= VM_L2_BYTES / (16 * ncols))
+    if (ncols <= VMU_VL * nvmax || len <= VECMAT_L2_BYTES / (16 * ncols))
         rows = len;
     else
-        rows = VM_U64_ROWS;
+        rows = VECMAT_U64_ROWS;
 
     TMP_START;
 
@@ -1105,7 +1115,7 @@ vm_u64(ulong * const * c, const ulong * const * a, const ulong * B,
     {
         const slong wj = FLINT_MIN(W, ncols - j0);
         const ulong * Bw = B + j0;
-        ulong * cw[VM_U64_GROUP_MAX];
+        ulong * cw[VECMAT_U64_GROUP_MAX];
         int t;
 
         for (t = 0; t < r; t++)
@@ -1133,24 +1143,24 @@ vm_u64(ulong * const * c, const ulong * const * a, const ulong * B,
 
                 switch (64 * split + 8 * r + nv)
                 {
-                    VM_U64_CASE(1, 1, 1)
-                    VM_U64_CASE(1, 2, 1)
-                    VM_U64_CASE(2, 1, 1)
-                    VM_U64_CASE(1, 1, 0)
+                    VECMAT_U64_CASE(1, 1, 1)
+                    VECMAT_U64_CASE(1, 2, 1)
+                    VECMAT_U64_CASE(2, 1, 1)
+                    VECMAT_U64_CASE(1, 1, 0)
 #if VMU_VL == 8
-                    VM_U64_CASE(1, 4, 1)
-                    VM_U64_CASE(1, 8, 1)
-                    VM_U64_CASE(2, 2, 1)
-                    VM_U64_CASE(2, 3, 1)
-                    VM_U64_CASE(3, 1, 1)
-                    VM_U64_CASE(3, 2, 1)
-                    VM_U64_CASE(4, 1, 1)
-                    VM_U64_CASE(1, 2, 0)
-                    VM_U64_CASE(1, 4, 0)
-                    VM_U64_CASE(2, 1, 0)
-                    VM_U64_CASE(2, 2, 0)
-                    VM_U64_CASE(3, 1, 0)
-                    VM_U64_CASE(4, 1, 0)
+                    VECMAT_U64_CASE(1, 4, 1)
+                    VECMAT_U64_CASE(1, 8, 1)
+                    VECMAT_U64_CASE(2, 2, 1)
+                    VECMAT_U64_CASE(2, 3, 1)
+                    VECMAT_U64_CASE(3, 1, 1)
+                    VECMAT_U64_CASE(3, 2, 1)
+                    VECMAT_U64_CASE(4, 1, 1)
+                    VECMAT_U64_CASE(1, 2, 0)
+                    VECMAT_U64_CASE(1, 4, 0)
+                    VECMAT_U64_CASE(2, 1, 0)
+                    VECMAT_U64_CASE(2, 2, 0)
+                    VECMAT_U64_CASE(3, 1, 0)
+                    VECMAT_U64_CASE(4, 1, 0)
 #endif
                     default: FLINT_UNREACHABLE;
                 }
@@ -1183,25 +1193,26 @@ _nmod_mat_mul_rows_simd(ulong * const * c, const ulong * const * a, slong r,
 
         slong s, g;
 
-        if (B->c <= VM_REGS_MAX_COLS)
+        if (B->c <= VECMAT_REGS_MAX_COLS)
         {
             /* with many columns and the high halves, groups of 3 rows keep
-               the register blocks 4 vectors wide (see vm_u52_regs) */
-            g = (!ctx.lo_only && B->c > VM_REGS_WIDE_COLS) ? 3 : VM_ROWS;
+               the register blocks 4 vectors wide (see vecmat_u52_regs) */
+            g = (!ctx.lo_only && B->c > VECMAT_REGS_WIDE_COLS)
+                ? 3 : VECMAT_ROWS;
             for (s = 0; s < r; s += g)
-                vm_u52_regs(c + s, a + s, len, B, (int) FLINT_MIN(r - s, g),
-                            !ctx.lo_only, &C);
+                vecmat_u52_regs(c + s, a + s, len, B, (int) FLINT_MIN(r - s, g),
+                                !ctx.lo_only, &C);
         }
         else
         {
             for (s = 0; s < r; s += 4)
-                vm_u52_wide(c + s, a + s, len, B, (int) FLINT_MIN(r - s, 4),
-                            !ctx.lo_only, &C);
+                vecmat_u52_wide(c + s, a + s, len, B, (int) FLINT_MIN(r - s, 4),
+                                !ctx.lo_only, &C);
         }
         return 1;
     }
 #endif
-#if NMOD_MAT_HAVE_VM_U32
+#if NMOD_MAT_HAVE_VECMAT_U32
     if (B->mod.n <= (UWORD(1) << 32))
     {
         /* groups of at most 4 rows */
@@ -1209,29 +1220,29 @@ _nmod_mat_mul_rows_simd(ulong * const * c, const ulong * const * a, slong r,
         for (s = 0; s < r; s += 4)
         {
             const int rs = (int) FLINT_MIN(r - s, 4);
-            if (B->c <= VM_U32_REGS_MAX_COLS)
-                vm_u32_regs(c + s, a + s, len, B, rs);
+            if (B->c <= VECMAT_U32_REGS_MAX_COLS)
+                vecmat_u32_regs(c + s, a + s, len, B, rs);
             else
-                vm_u32_wide(c + s, a + s, len, B, rs);
+                vecmat_u32_wide(c + s, a + s, len, B, rs);
         }
         return 1;
     }
 #endif
-#if VM_HAVE_FP50
+#if VECMAT_HAVE_FP50
     if (B->mod.n < (UWORD(1) << 50))
     {
         slong s;
         for (s = 0; s < r; s += 4)
-            vm_fp50(c + s, a + s, len, B, (int) FLINT_MIN(r - s, 4));
+            vecmat_fp50(c + s, a + s, len, B, (int) FLINT_MIN(r - s, 4));
         return 1;
     }
 #endif
-#if NMOD_MAT_HAVE_VM_U64
+#if NMOD_MAT_HAVE_VECMAT_U64
     {
-        /* all the other moduli; more than VM_U64_MAX_LEN rows by parts,
+        /* all the other moduli; more than VECMAT_U64_MAX_LEN rows by parts,
            the next ones going through a temporary */
         const slong ncols = B->c;
-        vm_u64_ctx_struct C;
+        vecmat_u64_ctx_struct C;
         ulong * cc[NMOD_MAT_MUL_ROWS_MAX];
         const ulong * aa[NMOD_MAT_MUL_ROWS_MAX];
         ulong * t = NULL;
@@ -1239,9 +1250,9 @@ _nmod_mat_mul_rows_simd(ulong * const * c, const ulong * const * a, slong r,
 
         for (i0 = 0; i0 < len; i0 = i1)
         {
-            i1 = FLINT_MIN(len, i0 + VM_U64_MAX_LEN);
-            vm_u64_ctx_init(&C, B->mod, i1 - i0);
-            g = VM_U64_GROUP(C.split);
+            i1 = FLINT_MIN(len, i0 + VECMAT_U64_MAX_LEN);
+            vecmat_u64_ctx_init(&C, B->mod, i1 - i0);
+            g = VECMAT_U64_GROUP(C.split);
 
             if (i0 > 0 && t == NULL)
                 t = flint_malloc(r * ncols * sizeof(ulong));
@@ -1253,8 +1264,9 @@ _nmod_mat_mul_rows_simd(ulong * const * c, const ulong * const * a, slong r,
             }
 
             for (s = 0; s < r; s += g)
-                vm_u64(cc + s, aa + s, nmod_mat_entry_ptr(B, i0, 0), B->stride,
-                       i1 - i0, ncols, (int) FLINT_MIN(r - s, g), &C);
+                vecmat_u64(cc + s, aa + s, nmod_mat_entry_ptr(B, i0, 0),
+                           B->stride, i1 - i0, ncols,
+                           (int) FLINT_MIN(r - s, g), &C);
 
             if (i0 > 0)
                 for (s = 0; s < r; s++)
@@ -1282,9 +1294,9 @@ _nmod_mat_mul_rows_simd(ulong * const * c, const ulong * const * a, slong r,
     thresholds it wins by 1.05-1.4x (Cascade Lake).
 */
 FLINT_FORCE_INLINE int
-vm_use_rows_simd(slong len, slong ncols, ulong n)
+vecmat_use_rows_simd(slong len, slong ncols, ulong n)
 {
-#if FLINT_BITS == 64 && NMOD_MAT_HAVE_VM_U64
+#if FLINT_BITS == 64 && NMOD_MAT_HAVE_VECMAT_U64
     if (NMOD_MAT_NMOD_VEC_MUL_IS_U64(n))
     {
         if (n <= (UWORD(1) << 61))
@@ -1319,7 +1331,7 @@ void nmod_mat_nmod_vec_mul(
         return;
     }
 
-    if (len >= 2 && vm_use_rows_simd(len, ncols, B->mod.n)
+    if (len >= 2 && vecmat_use_rows_simd(len, ncols, B->mod.n)
             && _nmod_mat_mul_rows_simd(&c, &a, 1, len, B))
         return;
 
