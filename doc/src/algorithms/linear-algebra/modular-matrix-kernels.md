@@ -263,8 +263,8 @@ methods for such shapes when a vector code path exists for $N$.
   when $B$ takes more than 512 KB (half of a level 2 cache of 1 MB, a
   compile-time parameter), the rows go 16 at a time and the accumulators
   are kept in the level 2 cache in between. `nmod_mat_mul` uses it when $B$
-  has at least 16 columns. This is also the algorithm of
-  `nmod_mat_nmod_vec_mul`.
+  has at least 6 columns. This is also the algorithm of
+  `nmod_mat_nmod_vec_mul` (for $B$ wide enough).
 - *Few columns* (2 to 4, or 2 to 8 with IFMA): the columns of $B$ are
   transposed once, and each row of $A$ is multiplied with all of them as
   simultaneous dot products that share the loads of the row, with the

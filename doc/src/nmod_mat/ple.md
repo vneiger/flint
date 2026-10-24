@@ -141,32 +141,47 @@ multiplication, and decomposes the remaining block, calling
 `nmod_mat_ple` for the two halves. Its cost is dominated by matrix
 multiplication.
 
-`nmod_mat_ple` uses the classical algorithm when $\min(m, n) \le 3$, or
-$\le 7$ for $p \ge 2^{28}$, and the recursive algorithm when
-$\min(m, n)$ is at least the following crossover $c$, or when
-$m \ge 4n$, $n \ge c/2$ and $p \ge 4$:
+`nmod_mat_ple` chooses the algorithm as follows, with $s = \min(m, n)$;
+the thresholds depend on the SIMD kernels compiled in, with one set of
+values for AVX512-IFMA (whose dot products and vector-matrix products
+make the Crout algorithm faster up to $2^{52}$) and one for the other
+targets.
 
-| Modulus | $c$ |
-|---|---|
-| $p < 4$ | 64 |
-| $4 \le p < 2^7$ | 244 to 332 |
-| $2^7 \le p < 2^{28}$ | 320 |
-| $2^{28} \le p < 2^{29}$ | 160 |
-| $2^{29} \le p < 2^{32}$ | 64 |
-| $2^{32} \le p < 2^{50}$ | 160 |
-| $2^{50} \le p < 2^{52}$ | 256 |
-| $p \ge 2^{52}$ | 768 |
+- The classical algorithm when $s \le 3$, or $s \le 7$ and the delayed
+  algorithm would need two or three words per entry.
+- The recursive algorithm when $s \ge 96$ and $mn \ge 2^e$:
 
-Otherwise, it uses the Crout algorithm when the delayed algorithm would
-need two or three words per entry and either $p \ge 2^{50}$ and
-$mn \ge 2^{15}$, or $A$ has at least 32 rows and at least twice as many
-columns as rows (four times for $p < 2^{32}$), where the vector-matrix
-products are most of the work; otherwise the delayed algorithm. These
-choices were measured on a Xeon Cascade Lake (AVX-512 without IFMA)
-with uniformly random matrices, and may not be the best on other
-machines. On matrices with many zero multipliers, the classical and
-delayed algorithms, which skip them, can be faster than the others
-beyond these crossovers.
+  | Modulus | $e$ (IFMA) | $e$ (other) |
+  |---|---|---|
+  | $p < 4$ | 17 | 17 |
+  | $4 \le p < 2^{29}$ | 16 | 16 |
+  | $2^{29} \le p < 2^{32}$ | 17 | 16 |
+  | $2^{32} \le p < 2^{52}$ | 18 | 16 |
+  | $p \ge 2^{52}$ | 21 | 19 |
+
+- For $p = 2$ on x86-64 with AVX2 and $n \ge 4m$, the classical
+  algorithm.
+- The Crout algorithm when the delayed algorithm would need two or three
+  words per entry, `nmod_mat_nmod_vec_mul` has a vector code path for
+  $p$ (not for $p \ge 2^{50}$ on NEON), and $s \ge S$ or ($n \ge 2m$
+  and $n \ge N_0$):
+
+  | Modulus | $(S, N_0)$ (IFMA) | $(S, N_0)$ (other) |
+  |---|---|---|
+  | $p < 2^{32}$ | (32, 16) | (64, 256) |
+  | $2^{32} \le p < 2^{50}$ | (32, 16) | (128, 64) |
+  | $2^{50} \le p < 2^{52}$ | (32, 16) | (128, 128) |
+  | $2^{52} \le p < 2^{62}$ | (64, 128) | (128, 128) |
+  | $p \ge 2^{62}$ | (64, 128) | (64, 128) |
+
+- Otherwise the delayed algorithm.
+
+These choices were tuned with uniformly random matrices on Zen 4 and Ice
+Lake SP (AVX512-IFMA), Cascade Lake (AVX-512 without IFMA) and Apple M4
+(NEON), and may not be the best on other machines (in particular with
+AVX2 but not AVX-512). On matrices with many zero multipliers, the
+classical and delayed algorithms, which skip all of them, can be faster
+than the others beyond these crossovers.
 
 ## Example {#example}
 

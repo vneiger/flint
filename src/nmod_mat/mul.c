@@ -134,6 +134,13 @@ nmod_mat_mul(nmod_mat_t C, const nmod_mat_t A, const nmod_mat_t B)
             a[i] = nmod_mat_entry_ptr(A, i, 0);
         }
 
+        /* one row: the rule of nmod_mat_nmod_vec_mul for narrow B */
+        if (m == 1)
+        {
+            nmod_mat_nmod_vec_mul(c[0], a[0], k, B);
+            return;
+        }
+
         if (_nmod_mat_mul_rows_simd(c, a, m, k, B))
             return;
     }

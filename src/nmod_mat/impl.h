@@ -80,9 +80,9 @@
 # define NMOD_MAT_HAVE_VECMAT_U64 0
 #endif
 
-/* whether nmod_mat_nmod_vec_mul and _nmod_mat_mul_rows_simd delay their
-   reductions for this modulus (SIMD accumulation), rather than one modular
-   multiplication per entry; _IS_U64: whether this is with the u64 path */
+/* whether _nmod_mat_mul_rows_simd has a SIMD path for this modulus (which
+   nmod_mat_nmod_vec_mul uses when B is wide enough), rather than one modular
+   multiplication per entry; _IS_U64: whether this is the u64 path */
 #define _NMOD_MAT_NMOD_VEC_MUL_IS_SIMD_SMALL(n) \
     ((NMOD_MAT_HAVE_MUL_U52 && (n) <= (UWORD(1) << 52)) \
      || (NMOD_MAT_HAVE_VECMAT_U32 && (n) <= (UWORD(1) << 32)) \
@@ -94,15 +94,16 @@
 
 /*
     The fewest columns of B for which nmod_mat_mul uses the u64 path of
-    _nmod_mat_mul_rows_simd: from 16 columns on it was faster than the
-    classical code (and than nmod_mat_mul_k52 at 51-52 bits) for every
-    inner dimension k >= 2 and 1 to 4 rows, by 1.3-2.4x at k = 2 and up
-    to 11-14x for large k (Cascade Lake, 51 to 64 bits). With fewer, the
-    vectors are partly padding, and these small products lost to the
-    two-word dot products of the classical code in some shapes (by up to
-    1.3x with 10 to 12 columns, 1.9x with 4).
+    _nmod_mat_mul_rows_simd with 2 rows or more (one row goes through
+    nmod_mat_nmod_vec_mul and its own rule): from 6 columns on it was faster
+    than nmod_mat_mul_classical for the inner dimensions k = 2..512 and 2 to
+    4 rows (Zen 4, Ice Lake SP, Cascade Lake, 51 to 64 bits), and than what
+    nmod_mat_mul did with 6 to 15 columns (also nmod_mat_mul_k52 at 51-52
+    bits without IFMA) by 1.1-2.4x, except at 64 bits with 4 rows and
+    k = 512 (up to 1.3x slower, Ice Lake SP); with 4 columns it won only
+    up to k = 32, and it lost with 2.
 */
-#define NMOD_MAT_MUL_ROWS_U64_MIN_COLS 16
+#define NMOD_MAT_MUL_ROWS_U64_MIN_COLS 6
 
 /*
     Whether the few-columns products of mul_cols.c have a vectorized path
@@ -196,8 +197,10 @@ void _nmod_mat_mul_strassen_cutoff(nmod_mat_t C, const nmod_mat_t A,
 /*
     c[s] = a[s] * B for 1 <= r <= NMOD_MAT_MUL_ROWS_MAX vectors a[s] of
     length len (1 <= len <= B->r), the rows of B being read once for all
-    of them, with the delayed reductions of nmod_mat_nmod_vec_mul (which is
-    the case r = 1). Returns 0 without doing anything when the modulus has
+    of them, with the delayed reductions of nmod_mat_nmod_vec_mul (which
+    uses the case r = 1 when B is wide enough for it, see
+    vecmat_use_rows_simd in nmod_vec_mul.c). Returns 0 without doing
+    anything when the modulus has
     no SIMD path (NMOD_MAT_NMOD_VEC_MUL_IS_SIMD). The c[s] must not overlap
     the a[s] nor B.
 */

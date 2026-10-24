@@ -28,13 +28,13 @@ _nmod_mat_ple_permute_rows(nmod_mat_t A, const slong * perm)
     char * done;
     TMP_INIT;
 
-    if (n == 0)
+    if (n <= 0)
         return;
 
     for (start = 0; start < m && perm[start] == start; start++)
         ;
 
-    if (start == m)
+    if (start >= m)
         return;
 
     TMP_START;
@@ -131,61 +131,111 @@ _nmod_mat_ple_rows_finish(slong * P, slong * Q, nmod_mat_t A, slong * orig,
 }
 
 /*
-    The choice of the algorithm, from measurements on a Xeon Cascade Lake
-    (AVX-512 without IFMA, one thread, no external BLAS) on uniformly
-    random matrices; the profile program p-ple gives the timings to tune it
-    on other machines.
+    The choice of the algorithm, tuned on uniformly random matrices (one
+    thread, no external BLAS) on Zen 4 and Ice Lake SP (AVX512-IFMA),
+    Cascade Lake (AVX-512 without IFMA) and Apple M4 (NEON); the profile
+    program p-ple gives the timings to tune it on other machines. The
+    crossovers depend on the SIMD kernels compiled in, hence two classes:
+    with AVX512-IFMA (NMOD_MAT_HAVE_MUL_U52), whose u52 dot products and
+    vector-matrix products make the Crout algorithm faster up to 2^52, and
+    the others (AVX2 or AVX-512 without IFMA, NEON, generic). The second
+    class was measured with AVX-512 and NEON only: for AVX2 alone the
+    values are extrapolated.
 
-    - min(m, n) <= 3, or <= 7 for moduli of more than 28 bits: the
-      classical algorithm, as in nmod_mat_lu.
-    - The recursive algorithm from min(m, n) = c = ple_cutoff_tab[bits - 1],
-      and for m >= 4 n from n = c / 2 (the products of the recursion are
-      then larger; not for the moduli 2 and 3, whose c is already small):
-      it pays earlier where nmod_mat_mul is fast compared with the base
-      cases (moduli of 30 to 52 bits, for which these need two words per
-      entry, and moduli 2 and 3), later above 2^52, where nmod_mat_mul has
-      no SIMD kernel.
-    - Below, the Crout algorithm when the delayed one would need two or
-      three words per entry: for moduli of more than 50 bits from
-      m n = 2^15 (1.2-1.6x faster for squares from 192 to 768), and for
-      matrices with 32 rows or more and at least twice as many columns
-      (four times for moduli of 32 bits or less), where its vector-matrix
-      products are most of the work (1.2-2x faster). Otherwise the delayed
-      algorithm.
+    - min(m, n) <= 3, or <= 7 when the delayed algorithm would need two or
+      three words per entry: the classical algorithm, as in nmod_mat_lu.
+    - The modulus 2 on x86 with AVX2, for m x n with n >= 4 m below the
+      recursion: the classical algorithm too (its row operations are
+      additions; 1.2-1.75x faster than the delayed algorithm on the three
+      x86 machines, 1.15-2.2x slower on the M4).
+    - The recursive algorithm when min(m, n) >= 96 and m n >= 2^e, with e
+      from ple_rec_log2 (IFMA / other): 17 / 17 for p = 2 (and the modulus
+      3, not measured), 16 / 16 up to 29 bits, 17 / 16 from 30 to 32 bits,
+      18 / 16 from 33 to 52 bits, 21 / 19 above. A bound on m n fits the
+      tall and wide shapes better than one on min(m, n): with the best
+      base case chosen by hand, it was within 2% of the best everywhere.
+    - Below, the Crout algorithm when the delayed algorithm would need two
+      or three words per entry, nmod_mat_nmod_vec_mul has a SIMD path for
+      the modulus (not above 2^50 on NEON, where Crout was up to 1.5x
+      slower), and min(m, n) >= S or (n >= 2 m and n >= N0), with (S, N0)
+      from ple_crout_min (IFMA / other): (32, 16) / (64, 256) up to 32 bits,
+      (32, 16) / (128, 64) from 33 to 50 bits, (32, 16) / (128, 128) for 51
+      and 52 bits, (64, 128) / (128, 128) from 53 to 62 bits, (64, 128) /
+      (64, 128) above. Otherwise the delayed algorithm.
+
+    Average time over the best of the four algorithms (squares n = 4..1024,
+    shapes m = n/8..8n, 2 to 64 bits), before / after this tuning: squares
+    1.10 / 1.008 (Zen 4), 1.05 / 1.005 (Ice Lake SP), 1.013 / 1.006
+    (Cascade Lake), 1.026 / 1.018 (M4); shapes 1.12 / 1.020, 1.08 / 1.016,
+    1.045 / 1.010, 1.063 / 1.021. (Replayed on the timings of the four
+    algorithms; where the two classes differ, the values favour the x86
+    machine over the M4, by 1-3% at 30-32 bits.)
 
     The classical and delayed algorithms skip the rows whose multiplier is
-    zero, the Crout algorithm only part of them and the recursion none: on
-    matrices with many zero multipliers (structured or sparse matrices,
-    non-generic rank profiles), the delayed algorithm can be faster than
-    the others beyond these crossovers, as for nmod_mat_lu.
+    zero, the Crout algorithm only part of them (at the ends of each row)
+    and the recursion none: on matrices with many zero multipliers
+    (structured or sparse matrices, non-generic rank profiles), the delayed
+    algorithm can be faster than the others beyond these crossovers. On the
+    L R U matrices of p-ple (ranks), whose L has many zero multipliers
+    scattered in each row, the choice above is 1.11-1.16x slower than the
+    best on average (1.08-1.15x before this tuning, which did not use
+    Crout as much), and up to 2-2.7x for some low ranks.
 */
-static const short ple_cutoff_tab[64] = {
-    64, 64, 244, 280, 296, 320, 332,                /*  1 to  7 bits */
-    320, 320, 320, 320, 320, 320, 320, 320, 320,    /*  8 to 16 bits */
-    320, 320, 320, 320, 320, 320, 320, 320, 320,    /* 17 to 25 bits */
-    320, 320, 320, 160, 64, 64, 64,                 /* 26 to 32 bits */
-    160, 160, 160, 160, 160, 160, 160, 160, 160,    /* 33 to 41 bits */
-    160, 160, 160, 160, 160, 160, 160, 160, 160,    /* 42 to 50 bits */
-    256, 256,                                       /* 51 to 52 bits */
-    768, 768, 768, 768, 768, 768,                   /* 53 to 58 bits */
-    768, 768, 768, 768, 768, 768 };                 /* 59 to 64 bits */
+
+/* log2 of the bound on m n from which the recursive algorithm is used */
+static int
+ple_rec_log2(flint_bitcnt_t bits)
+{
+#if NMOD_MAT_HAVE_MUL_U52
+    return (bits <= 2) ? 17 : (bits <= 29) ? 16 : (bits <= 32) ? 17
+         : (bits <= 52) ? 18 : 21;
+#else
+    return (bits <= 2) ? 17 : (bits <= 52) ? 16 : 19;
+#endif
+}
+
+/* (S, N0) of the condition for the Crout algorithm */
+static void
+ple_crout_min(slong * S, slong * N0, flint_bitcnt_t bits)
+{
+#if NMOD_MAT_HAVE_MUL_U52
+    if (bits <= 52)
+        *S = 32, *N0 = 16;
+    else
+        *S = 64, *N0 = 128;
+#else
+    if (bits <= 32)
+        *S = 64, *N0 = 256;
+    else if (bits <= 50)
+        *S = 128, *N0 = 64;
+    else if (bits <= 62)
+        *S = 128, *N0 = 128;
+    else
+        *S = 64, *N0 = 128;
+#endif
+}
 
 slong
 _nmod_mat_ple(slong * P, slong * Q, nmod_mat_t A, slong max_nonpivots)
 {
-    slong m = A->r, n = A->c, s = FLINT_MIN(m, n), cutoff;
+    slong m = A->r, n = A->c, s = FLINT_MIN(m, n), S, N0;
     flint_bitcnt_t bits = NMOD_BITS(A->mod);
+    int nlimbs = _nmod_vec_dot_bound_limbs(s, A->mod);
 
-    if (s <= 3 || (bits > 28 && s <= 7))
+    if (s <= 3 || (s <= 7 && nlimbs >= 2))
         return _nmod_mat_ple_classical(P, Q, A, max_nonpivots);
 
-    cutoff = ple_cutoff_tab[bits - 1];
-    if (s >= cutoff || (m >= 4 * n && 2 * n >= cutoff && bits > 2))
+    if (s >= 96 && (ulong) m * (ulong) n >= (UWORD(1) << ple_rec_log2(bits)))
         return _nmod_mat_ple_recursive(P, Q, A, max_nonpivots);
 
-    if (_nmod_vec_dot_bound_limbs(s, A->mod) >= 2
-            && ((bits > 50 && (ulong) m * (ulong) n >= 32768)
-                || (m >= 32 && (n >= 4 * m || (bits > 32 && n >= 2 * m)))))
+#if NMOD_MAT_HAVE_VECMAT_U64
+    if (A->mod.n == 2 && n >= 4 * m)
+        return _nmod_mat_ple_classical(P, Q, A, max_nonpivots);
+#endif
+
+    ple_crout_min(&S, &N0, bits);
+    if (nlimbs >= 2 && NMOD_MAT_NMOD_VEC_MUL_IS_SIMD(A->mod.n)
+            && (s >= S || (n >= 2 * m && n >= N0)))
         return _nmod_mat_ple_crout(P, Q, A, max_nonpivots);
 
     return _nmod_mat_ple_classical_delayed(P, Q, A, max_nonpivots);

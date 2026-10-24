@@ -741,11 +741,14 @@ for the other moduli, by accumulating the products of limbs of at most
 32 bits of the entries as in
 [](algorithms/linear-algebra/dot-products#split-limbs), with one
 reduction of each entry of $c$ at the end
-([](algorithms/linear-algebra/modular-matrix-kernels#thin)). Otherwise
-each row is added with `_nmod_vec_scalar_addmul_nmod`, which is also
-done for these other moduli when the product is small: when fewer than
-4 rows of $B$ are used, or at most 32 entries of $B$, for moduli up to
-$2^{61}$, and fewer than 8 rows or 40 entries for larger moduli.
+([](algorithms/linear-algebra/modular-matrix-kernels#thin)). These code
+paths are not used when $B$ is too narrow for them, with thresholds on
+the length $k$ of $a$ and the number of columns that depend on the path
+(for instance, at least 4 columns with AVX512-IFMA, 5 for the moduli of
+the last path). Otherwise each row is added with
+`_nmod_vec_scalar_addmul_nmod` when $k$ is less than 6 (for
+$n \le 2^{32}$), 8 (up to $2^{62}$) or 10, and the product is done with
+`nmod_mat_mul_classical` on blocks of rows of $B$ for longer vectors.
 :::
 :::
 
