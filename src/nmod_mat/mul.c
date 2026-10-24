@@ -152,10 +152,11 @@ nmod_mat_mul(nmod_mat_t C, const nmod_mat_t A, const nmod_mat_t B)
         A has a few rows, NEON (the rows path has only its fp50 tier, two
         lanes per vector): measured on Apple M4 for N < 2^50, m = 2..4,
         k = 2..512, n = 2..32. For N <= 2^32 the u32 kernel where it is
-        faster (larger k and n), otherwise the classical code where it is
-        faster (small n relative to k), otherwise the rows path, also for
-        the shapes the generic condition below would send to the kernels
-        (m = 4, n >= 32, small k). The few-columns path never won.
+        faster (larger k and n; only from 4 rows for 32-bit N, where its
+        folds come every few products), otherwise the classical code where
+        it is faster (small n relative to k), otherwise the rows path, also
+        for the shapes the generic condition below would send to the
+        kernels (m = 4, n >= 32, small k). The few-columns path never won.
     */
     if (m >= 2 && m <= NMOD_MAT_MUL_ROWS_MAX && k >= 2
             && flint_num_threads == 1 && C != A && C != B
@@ -165,9 +166,12 @@ nmod_mat_mul(nmod_mat_t C, const nmod_mat_t A, const nmod_mat_t B)
         const ulong * a[NMOD_MAT_MUL_ROWS_MAX];
 
         if (C->mod.n <= (UWORD(1) << 32)
-                && ((m >= 4 && ((k >= 16 && n >= 4) || (k >= 8 && n >= 16)))
-                    || (m == 3 && ((k >= 32 && n >= 8) || (k >= 16 && n >= 20)))
-                    || (m == 2 && k >= 128 && n >= 24))
+                && ((m >= 4 && ((k >= 16 && n >= (k >= 512 ? 6 : 4))
+                                || (k >= 8 && n >= 16)))
+                    || (C->mod.n <= (UWORD(1) << 31)
+                        && ((m == 3 && ((k >= 32 && n >= 8)
+                                        || (k >= 16 && n >= 20)))
+                            || (m == 2 && k >= 128 && n >= 24))))
                 && nmod_mat_mul_u32(C, A, B))
             return;
 
