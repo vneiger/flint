@@ -12,6 +12,7 @@
 #include "nmod.h"
 #include "nmod_vec.h"
 #include "nmod_mat.h"
+#include "nmod_mat/impl.h"
 
 void
 nmod_mat_solve_tril_classical(nmod_mat_t X, const nmod_mat_t L, const nmod_mat_t B, int unit)
@@ -19,6 +20,14 @@ nmod_mat_solve_tril_classical(nmod_mat_t X, const nmod_mat_t L, const nmod_mat_t
     slong i, j, n, m;
     nmod_t mod;
     nn_ptr inv, tmp;
+
+    /* by rows of X with delayed reductions (impl.h), unless B has few
+       columns: one dot product per entry */
+    if (NMOD_MAT_SOLVE_TRI_LEFT_ROWS(L->r, B->c, L->mod.n))
+    {
+        _nmod_mat_solve_tri_rows_delayed(X, L, B, unit, 0, 0);
+        return;
+    }
 
     n = L->r;
     m = B->c;

@@ -334,4 +334,37 @@ _nmod_mat_addmul_want_mul(slong m, slong k, slong n, nmod_t mod)
     return 0;
 }
 
+/*
+    Triangular solves by substitution with delayed reductions
+    (solve_tri_delayed.c), for an r x r triangular T (lower or upper) and B
+    with k columns (T X = B, right = 0) or k rows (X T = B, right = 1).
+    X may alias B; the diagonal of T is not read if unit is nonzero.
+
+    _nmod_mat_solve_tri_rows_delayed computes X (or X^T, B being transposed
+    by blocks) by rows, each as a combination of the previous ones: vectors
+    of length k. _nmod_mat_solve_tri_right_axpy_delayed solves X T = B row
+    by row, adding x[j] times the row j of T to the remaining entries:
+    vectors of length at most r - 1.
+
+    The classical solves use them unless the vectors are long and few,
+    where one dot product per entry is faster: left, rows if
+    k >= max(4, r / c); right, rows if k >= max(6, r / c), and otherwise
+    axpy if r <= 32 c or k <= 4; with c = 4 when the accumulation fits
+    in one limb with few reductions (n <= 2^(FLINT_BITS / 2 - 1)), and
+    c = 2 otherwise.
+*/
+void _nmod_mat_solve_tri_rows_delayed(nmod_mat_t X, const nmod_mat_t T,
+        const nmod_mat_t B, int unit, int upper, int right);
+void _nmod_mat_solve_tri_right_axpy_delayed(nmod_mat_t X, const nmod_mat_t T,
+        const nmod_mat_t B, int unit, int upper);
+
+#define _NMOD_MAT_SOLVE_TRI_C(n) \
+    (((n) <= (UWORD(1) << (FLINT_BITS / 2 - 1))) ? 4 : 2)
+#define NMOD_MAT_SOLVE_TRI_LEFT_ROWS(r, k, n) \
+    ((k) >= FLINT_MAX(4, (r) / _NMOD_MAT_SOLVE_TRI_C(n)))
+#define NMOD_MAT_SOLVE_TRI_RIGHT_ROWS(r, k, n) \
+    ((k) >= FLINT_MAX(6, (r) / _NMOD_MAT_SOLVE_TRI_C(n)))
+#define NMOD_MAT_SOLVE_TRI_RIGHT_AXPY(r, k, n) \
+    ((r) <= 32 * _NMOD_MAT_SOLVE_TRI_C(n) || (k) <= 4)
+
 #endif

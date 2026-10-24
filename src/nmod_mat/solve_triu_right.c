@@ -12,12 +12,15 @@
 #include "nmod.h"
 #include "nmod_vec.h"
 #include "nmod_mat.h"
+#include "nmod_mat/impl.h"
 
-/* columns of the triangle copied to rows at a time, for the dot products */
+/* columns of the triangular matrix copied to rows at a time, for the dot products */
 #define TRSM_RIGHT_BLOCK 64
 
 /*
-    X U = B, row by row: x_j = (b_j - sum_{t < j} x_t U[t][j]) / U[j][j]
+    With the delayed reductions of solve_tri_delayed.c, unless the vectors
+    would be long and few (see impl.h). Otherwise, X U = B row by row:
+    x_j = (b_j - sum_{t < j} x_t U[t][j]) / U[j][j]
     for j = 0, ..., r - 1. For the dot products, the columns of U above the
     diagonal are copied to rows, TRSM_RIGHT_BLOCK of them at a time, each
     block serving all the rows of X.
@@ -33,6 +36,18 @@ nmod_mat_solve_triu_right_classical(nmod_mat_t X, const nmod_mat_t U,
 
     if (r == 0 || k == 0)
         return;
+
+    /* with delayed reductions (impl.h), unless the vectors would be long */
+    if (NMOD_MAT_SOLVE_TRI_RIGHT_ROWS(r, k, mod.n))
+    {
+        _nmod_mat_solve_tri_rows_delayed(X, U, B, unit, 1, 1);
+        return;
+    }
+    if (NMOD_MAT_SOLVE_TRI_RIGHT_AXPY(r, k, mod.n))
+    {
+        _nmod_mat_solve_tri_right_axpy_delayed(X, U, B, unit, 1);
+        return;
+    }
 
     if (!unit)
     {
