@@ -95,7 +95,8 @@
 /*
     The fewest columns of B for which nmod_mat_mul uses the u64 path of
     _nmod_mat_mul_rows_simd with 2 rows or more (one row goes through
-    nmod_mat_nmod_vec_mul and its own rule): from 6 columns on it was faster
+    nmod_mat_nmod_vec_mul and its own rule; see also _nmod_mat_mul_rows_wanted
+    in mul.c for 4 and 5 columns): from 6 columns on it was faster
     than nmod_mat_mul_classical for the inner dimensions k = 2..512 and 2 to
     4 rows (Zen 4, Ice Lake SP, Cascade Lake, 51 to 64 bits), and than what
     nmod_mat_mul did with 6 to 15 columns (also nmod_mat_mul_k52 at 51-52

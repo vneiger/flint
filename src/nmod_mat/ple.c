@@ -134,13 +134,17 @@ _nmod_mat_ple_rows_finish(slong * P, slong * Q, nmod_mat_t A, slong * orig,
     The choice of the algorithm, tuned on uniformly random matrices (one
     thread, no external BLAS) on Zen 4 and Ice Lake SP (AVX512-IFMA),
     Cascade Lake (AVX-512 without IFMA) and Apple M4 (NEON); the profile
-    program p-ple gives the timings to tune it on other machines. The
-    crossovers depend on the SIMD kernels compiled in, hence two classes:
+    program p-ple gives the timings to tune it on other machines.
+
+    The crossovers depend on the SIMD kernels compiled in, hence two classes:
     with AVX512-IFMA (NMOD_MAT_HAVE_MUL_U52), whose u52 dot products and
-    vector-matrix products make the Crout algorithm faster up to 2^52, and
-    the others (AVX2 or AVX-512 without IFMA, NEON, generic). The second
-    class was measured with AVX-512 and NEON only: for AVX2 alone the
-    values are extrapolated.
+    vector-matrix products make the Crout algorithm faster up to 2^52, and the
+    others (AVX2 or AVX-512 without IFMA, NEON, generic), with two values for
+    30 to 32 bits that differ between x86 (AVX2, NMOD_MAT_HAVE_VECMAT_U64) and
+    the other targets. 
+
+    TODO AVX2 measurements (the second class was measured with AVX-512 and
+    NEON only: for AVX2 alone the values are extrapolated)
 
     - min(m, n) <= 3, or <= 7 when the delayed algorithm would need two or
       three words per entry: the classical algorithm, as in nmod_mat_lu.
@@ -150,7 +154,8 @@ _nmod_mat_ple_rows_finish(slong * P, slong * Q, nmod_mat_t A, slong * orig,
       x86 machines, 1.15-2.2x slower on the M4).
     - The recursive algorithm when min(m, n) >= 96 and m n >= 2^e, with e
       from ple_rec_log2 (IFMA / other): 17 / 17 for p = 2 (and the modulus
-      3, not measured), 16 / 16 up to 29 bits, 17 / 16 from 30 to 32 bits,
+      3, not measured), 16 / 16 up to 29 bits, 17 / 16 from 30 to 32 bits
+      (14 without AVX2: 1.3-1.45x faster at n = 128-192 on the M4),
       18 / 16 from 33 to 52 bits, 21 / 19 above. A bound on m n fits the
       tall and wide shapes better than one on min(m, n): with the best
       base case chosen by hand, it was within 2% of the best everywhere.
@@ -158,18 +163,11 @@ _nmod_mat_ple_rows_finish(slong * P, slong * Q, nmod_mat_t A, slong * orig,
       or three words per entry, nmod_mat_nmod_vec_mul has a SIMD path for
       the modulus (not above 2^50 on NEON, where Crout was up to 1.5x
       slower), and min(m, n) >= S or (n >= 2 m and n >= N0), with (S, N0)
-      from ple_crout_min (IFMA / other): (32, 16) / (64, 256) up to 32 bits,
+      from ple_crout_min (IFMA / other): (32, 16) / (64, 256) up to 32 bits
+      ((128, 256) without AVX2),
       (32, 16) / (128, 64) from 33 to 50 bits, (32, 16) / (128, 128) for 51
       and 52 bits, (64, 128) / (128, 128) from 53 to 62 bits, (64, 128) /
       (64, 128) above. Otherwise the delayed algorithm.
-
-    Average time over the best of the four algorithms (squares n = 4..1024,
-    shapes m = n/8..8n, 2 to 64 bits), before / after this tuning: squares
-    1.10 / 1.008 (Zen 4), 1.05 / 1.005 (Ice Lake SP), 1.013 / 1.006
-    (Cascade Lake), 1.026 / 1.018 (M4); shapes 1.12 / 1.020, 1.08 / 1.016,
-    1.045 / 1.010, 1.063 / 1.021. (Replayed on the timings of the four
-    algorithms; where the two classes differ, the values favour the x86
-    machine over the M4, by 1-3% at 30-32 bits.)
 
     The classical and delayed algorithms skip the rows whose multiplier is
     zero, the Crout algorithm only part of them (at the ends of each row)
@@ -177,9 +175,9 @@ _nmod_mat_ple_rows_finish(slong * P, slong * Q, nmod_mat_t A, slong * orig,
     (structured or sparse matrices, non-generic rank profiles), the delayed
     algorithm can be faster than the others beyond these crossovers. On the
     L R U matrices of p-ple (ranks), whose L has many zero multipliers
-    scattered in each row, the choice above is 1.11-1.16x slower than the
+    scattered in each row, the choice above is 1.09-1.17x slower than the
     best on average (1.08-1.15x before this tuning, which did not use
-    Crout as much), and up to 2-2.7x for some low ranks.
+    Crout as much), and up to 2-2.6x for some low ranks.
 */
 
 /* log2 of the bound on m n from which the recursive algorithm is used */
@@ -190,7 +188,9 @@ ple_rec_log2(flint_bitcnt_t bits)
     return (bits <= 2) ? 17 : (bits <= 29) ? 16 : (bits <= 32) ? 17
          : (bits <= 52) ? 18 : 21;
 #else
-    return (bits <= 2) ? 17 : (bits <= 52) ? 16 : 19;
+    return (bits <= 2) ? 17 : (bits <= 29) ? 16
+         : (bits <= 32) ? (NMOD_MAT_HAVE_VECMAT_U64 ? 16 : 14)
+         : (bits <= 52) ? 16 : 19;
 #endif
 }
 
@@ -205,7 +205,7 @@ ple_crout_min(slong * S, slong * N0, flint_bitcnt_t bits)
         *S = 64, *N0 = 128;
 #else
     if (bits <= 32)
-        *S = 64, *N0 = 256;
+        *S = NMOD_MAT_HAVE_VECMAT_U64 ? 64 : 128, *N0 = 256;
     else if (bits <= 50)
         *S = 128, *N0 = 64;
     else if (bits <= 62)

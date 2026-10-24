@@ -1351,17 +1351,16 @@ _nmod_mat_mul_rows_simd(ulong * const * c, const ulong * const * a, slong r,
     is faster, by up to 2-5x at ncols = 1 (all paths, all machines
     measured). The thresholds, per path in the order of
     _nmod_mat_mul_rows_simd, were fitted on Zen 4 and Ice Lake SP (u52,
-    u64), Cascade Lake (u32, fp50, u64), Apple M4 (fp50 not yet), for
-    len = 2..1024 and ncols = 1..2048; with them the time is within 1-3%
-    of the best of the three ways on average (worst cases 1.2-2x, near the
-    crossovers), against 5-25% before (always the SIMD path except for u64).
+    u64), Cascade Lake (u32, fp50, u64) and Apple M4 (fp50), for moduli
+    of 20 to 64 bits, len = 2..1024 and ncols = 1..2048.
 
-    - u52 (IFMA, n <= 2^52): len >= 3 and ncols >= 4 (measured at 50-52
-      bits);
-    - u32 (n <= 2^32): len >= 6 and ncols >= 3;
-    - fp50 (n < 2^50): ncols >= 16, or ncols >= 5 and len <= 16 (for
-      longer vectors and up to 15 columns the classical product, with the
-      dot products of nmod_vec, is faster; measured with AVX-512);
+    - u52 (IFMA, n <= 2^52): ncols >= 4 and len >= 2 for n <= 2^26 (one
+      IFMA per vector), len >= 3 above;
+    - u32 (n <= 2^32): len >= 4 and ncols >= 4;
+    - fp50 (n < 2^50): ncols >= 16, or ncols >= 5 and len <= 16 with
+      AVX2 or AVX-512; ncols >= 32, or ncols >= 4 and len <= 12 with NEON
+      (for longer vectors and fewer columns the classical product, with
+      the dot products of nmod_vec, is faster);
     - u64 (the other moduli): ncols >= 5 and len >= 4 for n <= 2^61
       (split limbs), len >= 6 above (halves).
 */
@@ -1371,15 +1370,19 @@ vecmat_use_rows_simd(slong len, slong ncols, ulong n)
 #if FLINT_BITS == 64
 #if NMOD_MAT_HAVE_MUL_U52
     if (n <= (UWORD(1) << 52))
-        return len >= 3 && ncols >= 4;
+        return ncols >= 4 && len >= ((n <= (UWORD(1) << 26)) ? 2 : 3);
 #endif
 #if NMOD_MAT_HAVE_VECMAT_U32
     if (n <= (UWORD(1) << 32))
-        return len >= 6 && ncols >= 3;
+        return len >= 4 && ncols >= 4;
 #endif
 #if VECMAT_HAVE_FP50
     if (n < (UWORD(1) << 50))
+#if defined(FPV_NEON)
+        return ncols >= 32 || (ncols >= 4 && len <= 12);
+#else
         return ncols >= 16 || (ncols >= 5 && len <= 16);
+#endif
 #endif
 #if NMOD_MAT_HAVE_VECMAT_U64
     if (n <= (UWORD(1) << 61))
@@ -1394,21 +1397,24 @@ vecmat_use_rows_simd(slong len, slong ncols, ulong n)
 
 /*
     The length from which the fallback of nmod_mat_nmod_vec_mul uses the
-    classical product rather than one scalar_addmul per entry of a: 6 for
-    n <= 2^32, 8 up to 2^62, 10 above (cost of the two-word dot products
-    of the classical code); #2904 used 12 for all moduli, which cost
-    1.05-1.8x at len = 6-10 for narrow B (Cascade/Ice Lake, Zen 4, M4).
+    classical product rather than one scalar_addmul per entry of a: on x86
+    with AVX2, 6 for n <= 2^32, 8 up to 2^62, 10 above (cost of the
+    two-word dot products of the classical code); elsewhere 6 up to 2^62
+    and 8 above (Apple M4). #2904 used 12 for all moduli, which cost
+    1.05-1.8x at len = 6-10 for narrow B.
 */
 FLINT_FORCE_INLINE slong
 vecmat_classical_min_len(ulong n)
 {
-#if FLINT_BITS == 64
+#if FLINT_BITS == 64 && NMOD_MAT_HAVE_VECMAT_U64
     if (n <= (UWORD(1) << 32))
         return 6;
     else if (n <= (UWORD(1) << 62))
         return 8;
     else
         return 10;
+#elif FLINT_BITS == 64
+    return (n <= (UWORD(1) << 62)) ? 6 : 8;
 #else
     (void) n;
     return 6;
