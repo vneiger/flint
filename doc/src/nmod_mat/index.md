@@ -744,11 +744,14 @@ reduction of each entry of $c$ at the end
 ([](algorithms/linear-algebra/modular-matrix-kernels#thin)). These code
 paths are not used when $B$ is too narrow for them, with thresholds on
 the length $k$ of $a$ and the number of columns that depend on the path
-(for instance, at least 4 columns with AVX512-IFMA, 5 for the moduli of
-the last path). Otherwise each row is added with
-`_nmod_vec_scalar_addmul_nmod` when $k$ is less than 6 (for
-$n \le 2^{32}$), 8 (up to $2^{62}$) or 10, and the product is done with
-`nmod_mat_mul_classical` on blocks of rows of $B$ for longer vectors.
+(for instance, with AVX512-IFMA, from 16 columns for $k = 2$ down to 3 or
+4 columns from $k = 6$ on; 5 columns for the moduli of the last path).
+Otherwise, with one column, or up to 8 columns and $4 \le k \le 32$
+($8 \le k \le 32$ for $n > 2^{62}$), each entry of $c$ is a dot product;
+else each row is added with `_nmod_vec_scalar_addmul_nmod` when $k$ is
+less than 6 (for $n \le 2^{32}$), 8 (up to $2^{62}$) or 10, and the
+product is done with `nmod_mat_mul_classical` on blocks of rows of $B$
+for longer vectors.
 :::
 :::
 

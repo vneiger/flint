@@ -39,6 +39,7 @@ where $d = \min(m, k, n)$.
 
 | Case | Method |
 |---|---|
+| $m, k, n \le 3$ | each entry is a dot product accumulated in one to three words and reduced once |
 | $N \le 255$ and $d \ge 8$ | `nmod_mat_mul_u8`: bit-packed for $N = 2, 3$, byte table lookups for $N \le 16$, `flint_sgemm` above |
 | $n = 1$, $m \ge 8$, one thread | `nmod_mat_mul_nmod_vec` |
 | at most 4 rows in $A$ (8 with AVX512-IFMA), $k \ge 2$, a vector code path for $N$ (on x86-64 with AVX2 every $N$ has one), $C$ not aliased, and $B$ not too narrow for it (for instance, the path of $N \ge 2^{50}$, of $N > 2^{52}$ with IFMA, and of $2^{32} < N < 2^{50}$ without FMA, needs $n \ge 6$, or $n \ge 4$ and $k \le 128$ for $N \le 2^{61}$; the next case is preferred for 2 columns and $k \ge 128$) | the rows of $B$ are streamed once for all rows of $A$, as in `nmod_mat_nmod_vec_mul` |

@@ -218,6 +218,15 @@ int _nmod_mat_mul_cols_simd(nmod_mat_t C, const nmod_mat_t A,
                             const nmod_mat_t B);
 
 /*
+    C = A * B for tiny matrices, all dimensions at most 8 (mul.c): each
+    entry is a dot product accumulated in one, two or three words and
+    reduced once. nmod_mat_mul uses it when all dimensions are at most
+    NMOD_MAT_MUL_TINY_MAX. C may alias A or B.
+*/
+#define NMOD_MAT_MUL_TINY_MAX 3
+void _nmod_mat_mul_tiny(nmod_mat_t C, const nmod_mat_t A, const nmod_mat_t B);
+
+/*
     PLE decomposition (ple*.c). The internal functions take
     Q = pivots_nonpivots (not NULL) and a bound max_nonpivots on the number
     of columns without pivot met while some rows are not yet pivot rows:

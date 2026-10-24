@@ -253,6 +253,17 @@ TEST_FUNCTION_START(nmod_mat_nmod_vec_mul, state)
         else if (NMOD_MAT_NMOD_VEC_MUL_IS_SIMD(n))
             TEST_FUNCTION_FAIL("rows: declined, n: %wu\n", n);
 
+        /* nmod_mat_nmod_vec_mul on the same window (its other paths) */
+        nmod_mat_nmod_vec_mul(c[0], a[0], k, B);
+        _nmod_vec_scalar_mul_nmod(d, nmod_mat_entry_ptr(B, 0, 0), m,
+                                  a[0][0], B->mod);
+        for (j = 1; j < k; j++)
+            _nmod_vec_scalar_addmul_nmod(d, nmod_mat_entry_ptr(B, j, 0), m,
+                                         a[0][j], B->mod);
+        if (!_nmod_vec_equal(c[0], d, m) || c[0][m] != 12345)
+            TEST_FUNCTION_FAIL("window vec_mul: k: %wd, m: %wd, extra: %wd, "
+                               "n: %wu, mode: %d\n", k, m, extra, n, mode);
+
         for (t = 0; t < r; t++)
         {
             _nmod_vec_clear(a[t]);

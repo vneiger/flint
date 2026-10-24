@@ -358,6 +358,9 @@ typedef __mmask8 vmu_mask_t;
 /* the first w lanes (0 < w <= VMU_VL), and a load of them (zero above) */
 # define vmu_mask(w)       ((__mmask8) ((1 << (w)) - 1))
 # define vmu_loadu_mask(p, m) _mm512_maskz_loadu_epi64(m, (const void *) (p))
+/* the same lanes, from a load of the whole vector (all of it must be
+   readable) */
+# define vmu_loadu_clear(p, m) _mm512_maskz_mov_epi64(m, vmu_loadu(p))
 #else
 # define VMU_VL 4
 typedef __m256i vmu_t;
@@ -378,6 +381,7 @@ typedef __m256i vmu_mask_t;
 # define vmu_mask(w)       _mm256_cmpgt_epi64(_mm256_set1_epi64x(w), \
                                               _mm256_set_epi64x(3, 2, 1, 0))
 # define vmu_loadu_mask(p, m) _mm256_maskload_epi64((const long long *) (p), m)
+# define vmu_loadu_clear(p, m) _mm256_and_si256(vmu_loadu(p), m)
 #endif
 
 #endif
@@ -419,25 +423,50 @@ static const int vecmat_u32_regs_nv[4] = {4, 2, 1, 1};
     hi local to the caller, they are register allocated (vecmat_u32_regs),
     otherwise they are in L1 and nv is arbitrary (vecmat_u32_wide).
 
-    A last partial vector (w not a multiple of VMU_VL) is read with a masked
-    load, zero above. It used to be copied to a zero-padded buffer in each
-    row, and the wide load of these narrow stores could not be forwarded:
-    1.4-6x slower for ncols = 1-7 and 9-15 than with the masked load
-    (Cascade Lake). The rows loop vecmat_u32_rows has a copy for each case
-    (partial is a constant at both call sites): with a test in the loop,
-    the compiler made the load of a full last vector a masked one too,
-    1.2-2x slower. For the same reason, the initial load of the residues
-    from c is masked only for a partial vector.
+    A last partial vector (w not a multiple of VMU_VL; the block then ends
+    at the last column of B) has its lanes above w cleared. It used to be
+    copied to a zero-padded buffer in each row, and the wide load of these
+    narrow stores could not be forwarded: 1.4-6x slower for ncols = 1-7
+    and 9-15 than with a masked load (Cascade Lake). With the masked load
+    intrinsic, however, GCC keeps the accumulators lo, hi in memory (a
+    store of each per row), so the rows whose whole last vector lies inside
+    B (it runs into the next rows) load it whole and clear the lanes (on
+    AVX-512, GCC turns this into the masked load instruction, with the
+    accumulators in registers); only the last rows, at most VMU_VL - 1 of
+    them, use the masked load intrinsic (with GCC and AVX-512; otherwise all
+    rows use it). The rows loop vecmat_u32_rows has a copy for each case
+    (mode is a constant at the call sites): with a test in the loop, the
+    compiler made the load of a full last vector a masked one too, 1.2-2x
+    slower. For the same reason, the initial load of the residues from c is
+    masked only for a partial vector.
 */
-FLINT_FORCE_INLINE void
+
+/* the two workarounds below are for GCC with AVX-512 (with clang, or with
+   AVX2, they were neutral or slightly slower) */
+/* TODO to be re-checked in the future with latest GCC */
+#if defined(__GNUC__) && !defined(__clang__) && VMU_VL == 8
+# define VECMAT_U32_GCC 1
+#else
+# define VECMAT_U32_GCC 0
+#endif
+
+/* mode 0: full last vector, 1: partial, loaded whole and cleared,
+   2: partial, masked load; returns the rows since the last fold */
+FLINT_FORCE_INLINE int
 vecmat_u32_rows(vmu_t * lo, vmu_t * hi, const ulong * const * a,
                 const nmod_mat_t B, slong j0, slong i0, slong i1, int r,
-                slong nv, int partial, vmu_mask_t mlast)
+                slong nv, int mode, vmu_mask_t mlast, int cnt)
 {
-    const vmu_t mask = vmu_set1((UWORD(1) << 56) - 1);
+    vmu_t mask = vmu_set1((UWORD(1) << 56) - 1);
     vmu_t av[VECMAT_ROWS], bv, p;
     slong i, v;
-    int s, cnt = 0;
+    int s;
+
+#if VECMAT_U32_GCC
+    /* keep the mask in a register: otherwise GCC may read it from memory
+       in each row */
+    __asm__ ("" : "+v" (mask));
+#endif
 
     for (i = i0; i < i1; i++)
     {
@@ -456,8 +485,12 @@ vecmat_u32_rows(vmu_t * lo, vmu_t * hi, const ulong * const * a,
                 hi[s * nv + v] = vmu_add(hi[s * nv + v], vmu_srli(p, 56));
             }
         }
-        bv = partial ? vmu_loadu_mask(b + VMU_VL * v, mlast)
-                     : vmu_loadu(b + VMU_VL * v);
+        if (mode == 0)
+            bv = vmu_loadu(b + VMU_VL * v);
+        else if (mode == 1)
+            bv = vmu_loadu_clear(b + VMU_VL * v, mlast);
+        else
+            bv = vmu_loadu_mask(b + VMU_VL * v, mlast);
         for (s = 0; s < r; s++)
         {
             p = vmu_mul(av[s], bv);
@@ -475,12 +508,15 @@ vecmat_u32_rows(vmu_t * lo, vmu_t * hi, const ulong * const * a,
             cnt = 0;
         }
     }
+
+    return cnt;
 }
 
+/* the rows used are those of index < len */
 FLINT_FORCE_INLINE void
 vecmat_u32_block(ulong * const * c, vmu_t * lo, vmu_t * hi,
                  const ulong * const * a, const nmod_mat_t B, slong j0,
-                 slong w, slong i0, slong i1, int r, slong nv)
+                 slong w, slong i0, slong i1, slong len, int r, slong nv)
 {
     const nmod_t mod = B->mod;
     const slong wl = w - VMU_VL * (nv - 1);   /* columns of the last vector */
@@ -500,9 +536,30 @@ vecmat_u32_block(ulong * const * c, vmu_t * lo, vmu_t * hi,
         hi[v] = vmu_zero();
 
     if (wl == VMU_VL)
-        vecmat_u32_rows(lo, hi, a, B, j0, i0, i1, r, nv, 0, mlast);
+        vecmat_u32_rows(lo, hi, a, B, j0, i0, i1, r, nv, 0, mlast, 0);
     else
-        vecmat_u32_rows(lo, hi, a, B, j0, i0, i1, r, nv, 1, mlast);
+    {
+        slong is = i0;
+        int cnt = 0;
+
+#if VECMAT_U32_GCC
+        /* the whole last vector of row i runs VMU_VL - wl entries past the
+           end of the row, which stays inside B (whose rows used end at
+           row len - 1) for i < len - ceil((VMU_VL - wl) / stride) */
+        const slong stride = B->stride;
+
+        if (stride >= B->c)
+        {
+            const slong e = VMU_VL - wl;
+            is = FLINT_MAX(i0, FLINT_MIN(i1,
+                     len - ((stride >= e) ? 1 : (e + stride - 1) / stride)));
+            cnt = vecmat_u32_rows(lo, hi, a, B, j0, i0, is, r, nv, 1, mlast, 0);
+        }
+#else
+        (void) len;
+#endif
+        vecmat_u32_rows(lo, hi, a, B, j0, is, i1, r, nv, 2, mlast, cnt);
+    }
 
     for (s = 0; s < r; s++)
     {
@@ -526,7 +583,7 @@ vecmat_u32_block(ulong * const * c, vmu_t * lo, vmu_t * hi,
 
 #define VECMAT_U32_REGS_CASE(R, NV) \
     case 8 * (R) + (NV): \
-        vecmat_u32_block(c, lo, hi, a, B, j0, w, i0, i1, R, NV); break;
+        vecmat_u32_block(c, lo, hi, a, B, j0, w, i0, i1, len, R, NV); break;
 
 static void
 vecmat_u32_regs(ulong * const * c, const ulong * const * a, slong len,
@@ -608,16 +665,16 @@ vecmat_u32_wide(ulong * const * c, const ulong * const * a, slong len,
         switch (r)
         {
             case 1:
-                vecmat_u32_block(c, lo, hi, a, B, j0, w, 0, len, 1, nv);
+                vecmat_u32_block(c, lo, hi, a, B, j0, w, 0, len, len, 1, nv);
                 break;
             case 2:
-                vecmat_u32_block(c, lo, hi, a, B, j0, w, 0, len, 2, nv);
+                vecmat_u32_block(c, lo, hi, a, B, j0, w, 0, len, len, 2, nv);
                 break;
             case 3:
-                vecmat_u32_block(c, lo, hi, a, B, j0, w, 0, len, 3, nv);
+                vecmat_u32_block(c, lo, hi, a, B, j0, w, 0, len, len, 3, nv);
                 break;
             case 4:
-                vecmat_u32_block(c, lo, hi, a, B, j0, w, 0, len, 4, nv);
+                vecmat_u32_block(c, lo, hi, a, B, j0, w, 0, len, len, 4, nv);
                 break;
             default: FLINT_UNREACHABLE;
         }
@@ -1354,8 +1411,9 @@ _nmod_mat_mul_rows_simd(ulong * const * c, const ulong * const * a, slong r,
     u64), Cascade Lake (u32, fp50, u64) and Apple M4 (fp50), for moduli
     of 20 to 64 bits, len = 2..1024 and ncols = 1..2048.
 
-    - u52 (IFMA, n <= 2^52): ncols >= 4 and len >= 2 for n <= 2^26 (one
-      IFMA per vector), len >= 3 above;
+    - u52 (IFMA, n <= 2^52): ncols >= 16 for len = 2, 8 for len = 3, 5 for
+      len = 4..5, and from len = 6 on 4 for n <= 2^26 (one IFMA per vector)
+      and 3 above;
     - u32 (n <= 2^32): len >= 4 and ncols >= 4;
     - fp50 (n < 2^50): ncols >= 16, or ncols >= 5 and len <= 16 with
       AVX2 or AVX-512; ncols >= 32, or ncols >= 4 and len <= 12 with NEON
@@ -1370,7 +1428,8 @@ vecmat_use_rows_simd(slong len, slong ncols, ulong n)
 #if FLINT_BITS == 64
 #if NMOD_MAT_HAVE_MUL_U52
     if (n <= (UWORD(1) << 52))
-        return ncols >= 4 && len >= ((n <= (UWORD(1) << 26)) ? 2 : 3);
+        return ncols >= ((len == 2) ? 16 : (len == 3) ? 8 : (len <= 5) ? 5
+                         : (n <= (UWORD(1) << 26)) ? 4 : 3);
 #endif
 #if NMOD_MAT_HAVE_VECMAT_U32
     if (n <= (UWORD(1) << 32))
@@ -1421,6 +1480,27 @@ vecmat_classical_min_len(ulong n)
 #endif
 }
 
+/* c[j] = sum a[i] B[i, j], one dot product per column (out of line: the
+   inlined dot products made the other paths of nmod_mat_nmod_vec_mul
+   slower on short vectors) */
+FLINT_STATIC_NOINLINE void
+vecmat_dots(ulong * c, const ulong * a, slong len, const nmod_mat_t B)
+{
+    const dot_params_t params = _nmod_vec_dot_params(len, B->mod);
+    slong j;
+
+    if (B->c == 1 && B->stride == 1)
+        c[0] = _nmod_vec_dot(a, B->entries, len, B->mod, params);
+    else
+        for (j = 0; j < B->c; j++)
+            c[j] = _nmod_vec_dot_strided(a, 1, B->entries + j, B->stride,
+                                         len, B->mod, params);
+}
+
+#ifndef VECMAT_NARROW_BYTES
+# define VECMAT_NARROW_BYTES 16384
+#endif
+
 void nmod_mat_nmod_vec_mul(
     ulong * c,
     const ulong * a, slong alen,
@@ -1447,6 +1527,22 @@ void nmod_mat_nmod_vec_mul(
             && _nmod_mat_mul_rows_simd(&c, &a, 1, len, B))
         return;
 
+    /* narrow B: one dot product per column (scalar_addmul and the classical
+       product have a setup cost per row or per block of rows), for one
+       column from length 3 (2 up to 2^62), for up to 8 columns from length
+       4 (8 above 2^62) to 32 */
+    if (ncols <= 8)
+    {
+        const int big = (B->mod.n > (UWORD(1) << (FLINT_BITS - 2)));
+
+        if (ncols == 1 ? (len >= 3 || !big)
+                       : (len >= (big ? 8 : 4) && len <= 32))
+        {
+            vecmat_dots(c, a, len, B);
+            return;
+        }
+    }
+
     /* below, the classical product does not pay for its overhead */
     if (len < vecmat_classical_min_len(B->mod.n))
     {
@@ -1461,11 +1557,18 @@ void nmod_mat_nmod_vec_mul(
     /*
         nmod_mat_mul_classical reads B by columns; for wide B a column
         spans one page per row, so take few rows at a time to keep them
-        in the TLB, in blocks of equal size
+        in the TLB, in blocks of equal size; for narrow B, larger blocks
+        (each one has a setup cost) of up to VECMAT_NARROW_BYTES (in L1)
     */
-    blk = (ncols < 512) ? 128 : 32;
-    nblk = (len + blk - 1) / blk;
-    blk = (len + nblk - 1) / nblk;
+    blk = (ncols < 16) ? VECMAT_NARROW_BYTES / (8 * ncols)
+                       : (ncols < 512) ? 128 : 32;
+    if (len <= blk)
+        blk = len;
+    else
+    {
+        nblk = (len + blk - 1) / blk;
+        blk = (len + nblk - 1) / nblk;
+    }
 
     TMP_START;
 

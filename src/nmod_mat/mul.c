@@ -43,6 +43,85 @@ _blas_1pass_cutoff(slong num_threads)
 #endif
 
 /*
+    C = A * B with all dimensions at most tmax (a constant at each call
+    site, <= 8): the bound k (n - 1)^2 on the dot products tells whether
+    they fit one word, two words with the high word below n (one reduction
+    by NMOD_RED2), or three words.
+*/
+FLINT_FORCE_INLINE void
+_nmod_mat_mul_tiny_impl(nmod_mat_t C, const nmod_mat_t A, const nmod_mat_t B,
+                        slong tmax)
+{
+    const slong m = A->r, k = A->c, n = B->c;
+    const nmod_t mod = C->mod;
+    ulong t[64], bh, bl, s0, s1, s2, h, l;
+    slong i, j, q;
+
+    FLINT_ASSERT(m <= tmax && k <= tmax && n <= tmax && tmax <= 8);
+
+    umul_ppmm(bh, bl, mod.n - 1, mod.n - 1);
+
+    if (bh == 0 && bl <= UWORD_MAX / tmax)
+    {
+        for (i = 0; i < m; i++)
+        {
+            const ulong * a = nmod_mat_entry_ptr(A, i, 0);
+            for (j = 0; j < n; j++)
+            {
+                s0 = 0;
+                for (q = 0; q < k; q++)
+                    s0 += a[q] * nmod_mat_entry(B, q, j);
+                NMOD_RED(t[i * n + j], s0, mod);
+            }
+        }
+    }
+    else if (bh + 1 <= mod.n / tmax)
+    {
+        for (i = 0; i < m; i++)
+        {
+            const ulong * a = nmod_mat_entry_ptr(A, i, 0);
+            for (j = 0; j < n; j++)
+            {
+                s1 = s0 = 0;
+                for (q = 0; q < k; q++)
+                {
+                    umul_ppmm(h, l, a[q], nmod_mat_entry(B, q, j));
+                    add_ssaaaa(s1, s0, s1, s0, h, l);
+                }
+                NMOD_RED2(t[i * n + j], s1, s0, mod);
+            }
+        }
+    }
+    else
+    {
+        for (i = 0; i < m; i++)
+        {
+            const ulong * a = nmod_mat_entry_ptr(A, i, 0);
+            for (j = 0; j < n; j++)
+            {
+                s2 = s1 = s0 = 0;
+                for (q = 0; q < k; q++)
+                {
+                    umul_ppmm(h, l, a[q], nmod_mat_entry(B, q, j));
+                    add_sssaaaaaa(s2, s1, s0, s2, s1, s0, UWORD(0), h, l);
+                }
+                NMOD_RED3(t[i * n + j], s2, s1, s0, mod);
+            }
+        }
+    }
+
+    for (i = 0; i < m; i++)
+        for (j = 0; j < n; j++)
+            nmod_mat_entry(C, i, j) = t[i * n + j];
+}
+
+void
+_nmod_mat_mul_tiny(nmod_mat_t C, const nmod_mat_t A, const nmod_mat_t B)
+{
+    _nmod_mat_mul_tiny_impl(C, A, B, 8);
+}
+
+/*
     Whether nmod_mat_mul tries the rows path for m = 2..NMOD_MAT_MUL_ROWS_MAX
     rows, k >= 2 and n columns, when the modulus modn has one (on top of the
     conditions in nmod_mat_mul). Measured on Zen 4 and Ice Lake SP
@@ -112,6 +191,15 @@ nmod_mat_mul(nmod_mat_t C, const nmod_mat_t A, const nmod_mat_t B)
     FLINT_ASSERT(C->r == A->r);
     FLINT_ASSERT(C->c == B->c);
     FLINT_ASSERT(A->c == B->r);
+
+    /* tiny matrices: before the costs of the dispatch below and of the
+       setup of the routines it calls */
+    if (m <= NMOD_MAT_MUL_TINY_MAX && k <= NMOD_MAT_MUL_TINY_MAX
+            && n <= NMOD_MAT_MUL_TINY_MAX)
+    {
+        _nmod_mat_mul_tiny_impl(C, A, B, NMOD_MAT_MUL_TINY_MAX);
+        return;
+    }
 
     /* Todo: optimize nmod_mat_mul_blas. For mod.n >= 17, nmod_mat_mul_blas
        should be faster up to dim about 1000-2000 as nmod_mat_mul_u8 does

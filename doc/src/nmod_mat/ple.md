@@ -116,6 +116,16 @@ recorded in `P`, among the rows that are not pivot rows yet, with a
 nonzero entry in that column. Why this pivoting reveals the rank profile
 matrix is explained in
 [](algorithms/linear-algebra/gaussian-elimination#rank-profile).
+For small matrices and moduli of more than 16 bits, where inverting each
+pivot costs about as much as updating the entries ($n \le 8$ columns,
+$n/2 \le m \le 16 n$ rows for $n \le 4$ and $m \le 2n$ beyond, at most
+16 rows for $p > 2^{\bits - 1}$, more than 24 bits from 5 columns on),
+it avoids these inversions: the eliminations replace a row $R$ by
+$d R - e R'$, where $R'$ is the pivot row and $d$ its pivot, which
+multiplies all the rows that are not pivot rows yet by the same factor;
+one inversion at the end gives the inverses of these factors and of the
+pivots, and the scaled multipliers and pivot rows are normalized. The
+result is the same.
 
 `nmod_mat_ple_classical_delayed` performs the same operations, but
 accumulates the updates of each entry unreduced, in the matrix itself if
