@@ -19,22 +19,27 @@ nmod_mat_solve_triu_classical(nmod_mat_t X, const nmod_mat_t U, const nmod_mat_t
     slong i, j, n, m;
     nmod_t mod;
     nn_ptr inv, tmp;
+    TMP_INIT;
 
     n = U->r;
     m = B->c;
     mod = U->mod;
 
+    TMP_START;
+
+    /* inverses of the diagonal entries: one inversion */
     if (!unit)
     {
-        inv = _nmod_vec_init(n);
+        inv = TMP_ALLOC(n * sizeof(ulong));
         for (i = 0; i < n; i++)
-            inv[i] = n_invmod(nmod_mat_entry(U, i, i), mod.n);
+            inv[i] = nmod_mat_entry(U, i, i);
+        _nmod_vec_invert(inv, inv, n, mod);
     }
     else
         inv = NULL;
 
     const dot_params_t params = _nmod_vec_dot_params(n, mod);
-    tmp = _nmod_vec_init(n);
+    tmp = TMP_ALLOC(n * sizeof(ulong));
 
     for (i = 0; i < m; i++)
     {
@@ -56,9 +61,7 @@ nmod_mat_solve_triu_classical(nmod_mat_t X, const nmod_mat_t U, const nmod_mat_t
             nmod_mat_entry(X, j, i) = tmp[j];
     }
 
-    _nmod_vec_clear(tmp);
-    if (!unit)
-        _nmod_vec_clear(inv);
+    TMP_END;
 }
 
 void
